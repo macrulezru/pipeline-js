@@ -1,5 +1,5 @@
 {
-  "name": "pipeline-js",
+  "name": "rest-pipeline-js",
   "version": "1.0.0",
   "description": "JS функционал для работы с REST API запросами.",
   "main": "src/rest-client.js",
@@ -18,8 +18,12 @@
     "client",
     "pipeline"
   ],
-  "author": "",
+  "author": "macrulez",
   "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/macrulezru/pipeline-js"
+  },
+  "homepage": "https://github.com/macrulezru/pipeline-js#readme",
   "devDependencies": {
     "typescript": "^5.9.3"
   },
