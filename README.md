@@ -6,14 +6,8 @@
 
 ## Установка
 
-### Через NPM (после публикации)
 ```
-npm install pipeline-js
-```
-
-### Из GitHub (актуально сейчас)
-```
-npm install git+https://github.com/macrulezru/pipeline-js.git
+npm i rest-pipeline-js
 ```
 
 ## Быстрый старт (чистый JS)
