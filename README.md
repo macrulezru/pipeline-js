@@ -1,44 +1,134 @@
 # pipeline-js
 
-Библиотека для работы с REST API запросами в Node.js и браузере.
-
-## Описание
-
-`pipeline-js` - это легковесная библиотека для упрощения работы с REST API. Она предоставляет удобный интерфейс для выполнения HTTP запросов с поддержкой цепочек обработки (pipeline pattern).
+Модуль для работы с REST API, пайплайнами запросов и отслеживанием прогресса. Не зависит от Vue/React, но легко интегрируется в любые проекты.
 
 ## Установка
 
-```bash
+```
 npm install pipeline-js
 ```
 
-или с использованием yarn:
+## Быстрый старт (чистый JS)
 
-```bash
-yarn add pipeline-js
-```
+```js
+const { createRestClient, PipelineOrchestrator } = require('pipeline-js');
 
-## Использование
-
-### Базовый пример
-
-```javascript
-const Pipeline = require('pipeline-js');
-
-// Создание экземпляра pipeline
-const api = new Pipeline({
-  baseURL: 'https://api.example.com'
+// Создание REST клиента
+const client = createRestClient({ baseURL: 'https://api.example.com' });
+client.get('/endpoint').then(response => {
+  console.log(response.data);
 });
 
-// Выполнение GET запроса
-api.get('/users')
-  .then(response => {
-    console.log(response.data);
-  })
-  .catch(error => {
-    console.error(error);
-  });
+// Пример пайплайна
+const pipeline = new PipelineOrchestrator({
+  stages: [
+    {
+      key: 'getUser',
+      request: async () => client.get('/user'),
+    },
+    {
+      key: 'getPosts',
+      request: async (_, results) => client.get(`/posts?userId=${results[0].data.id}`),
+    },
+  ],
+}, { baseURL: 'https://api.example.com' });
+
+// Подписка на прогресс
+const unsubscribe = pipeline.subscribeProgress(progress => {
+  console.log('Pipeline progress:', progress);
+});
+
+// Получить текущий прогресс (snapshot)
+console.log(pipeline.getProgress());
 ```
+
+
+## Использование в React
+
+```jsx
+import React, { useEffect, useState } from 'react';
+import { createRestClient, PipelineOrchestrator } from 'pipeline-js';
+
+const client = createRestClient({ baseURL: 'https://api.example.com' });
+
+export function PipelineProgress() {
+  const [progress, setProgress] = useState(() => ({ currentStage: 0, totalStages: 0, stageStatuses: [] }));
+
+  useEffect(() => {
+    const pipeline = new PipelineOrchestrator({
+      stages: [
+        {
+          key: 'getUser',
+          request: async () => client.get('/user'),
+        },
+        {
+          key: 'getPosts',
+          request: async (_, results) => client.get(`/posts?userId=${results[0].data.id}`),
+        },
+      ],
+    }, { baseURL: 'https://api.example.com' });
+
+    const unsubscribe = pipeline.subscribeProgress(setProgress);
+
+    // Запустить пайплайн (пример)
+    // pipeline.run();
+
+    return () => unsubscribe();
+  }, []);
+
+  return (
+    <div>
+      <div>Текущий этап: {progress.currentStage + 1} / {progress.totalStages}</div>
+      <ul>
+        {progress.stageStatuses.map((status, idx) => (
+          <li key={idx}>Этап {idx + 1}: {status}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+```
+
+## Использование в Vue 3
+
+```js
+import { createRestClient, PipelineOrchestrator } from 'pipeline-js';
+import { ref, onUnmounted } from 'vue';
+
+const client = createRestClient({ baseURL: 'https://api.example.com' });
+const pipeline = new PipelineOrchestrator({
+  stages: [
+    // ...
+  ],
+}, { baseURL: 'https://api.example.com' });
+
+const progress = ref(pipeline.getProgress());
+const unsubscribe = pipeline.subscribeProgress(p => {
+  progress.value = p;
+});
+onUnmounted(unsubscribe);
+```
+
+## Основные API
+
+### RestClient
+- `createRestClient(config)` — создать клиента (axios-like API: get, post, request и др.)
+
+### PipelineOrchestrator
+- `new PipelineOrchestrator(pipelineConfig, httpConfig)` — создать пайплайн
+- `subscribeProgress(listener)` — подписка на прогресс, возвращает функцию отписки
+- `getProgress()` — получить текущий прогресс (snapshot)
+
+### ProgressTracker (внутренний)
+- Реактивность реализована через подписки (observer pattern), не зависит от Vue/React
+
+## Структура
+- src/rest-client.ts — основной REST клиент
+- src/types.ts — типы
+- src/request-executor.ts — выполнение запросов
+- src/error-handler.ts — обработка ошибок
+- src/progress-tracker.ts — отслеживание прогресса
+- src/pipeline-orchestrator.ts — оркестрация пайплайна
 
 ### POST запрос
 
@@ -146,7 +236,8 @@ MIT
 
 ## Автор
 
-[macrulezru](https://github.com/macrulezru)
+Git [macrulezru](https://github.com/macrulezru)
+Сайт [macrulez.ru](https://macrulez.ru/)
 
 ## Поддержка
 

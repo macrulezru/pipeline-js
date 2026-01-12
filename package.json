@@ -1,0 +1,29 @@
+{
+  "name": "pipeline-js",
+  "version": "1.0.0",
+  "description": "JS функционал для работы с REST API запросами.",
+  "main": "src/rest-client.js",
+  "types": "src/types.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "echo \"No tests specified\" && exit 0"
+  },
+  "repository": {
+    "type": "git",
+    "url": ""
+  },
+  "keywords": [
+    "rest",
+    "api",
+    "client",
+    "pipeline"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "axios": "^1.13.2"
+  }
+}
