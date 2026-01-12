@@ -1,11 +1,28 @@
+
 # pipeline-js
+
+<p align="left">
+  <a href="https://github.com/macrulezru/pipeline-js"><img src="https://img.shields.io/github/stars/macrulezru/pipeline-js?style=social" alt="GitHub stars"></a>
+  <a href="https://github.com/macrulezru/pipeline-js"><img src="https://img.shields.io/github/forks/macrulezru/pipeline-js?style=social" alt="GitHub forks"></a>
+  <a href="https://github.com/macrulezru/pipeline-js/blob/master/LICENSE"><img src="https://img.shields.io/github/license/macrulezru/pipeline-js.svg" alt="License"></a>
+  <a href="https://www.npmjs.com/package/pipeline-js"><img src="https://img.shields.io/npm/v/pipeline-js.svg" alt="NPM version"></a>
+  <a href="https://www.npmjs.com/package/pipeline-js"><img src="https://img.shields.io/npm/dm/pipeline-js.svg" alt="NPM downloads"></a>
+</p>
+
 
 Модуль для работы с REST API, пайплайнами запросов и отслеживанием прогресса. Не зависит от Vue/React, но легко интегрируется в любые проекты.
 
+
 ## Установка
 
+### Через NPM (после публикации)
 ```
 npm install pipeline-js
+```
+
+### Из GitHub (актуально сейчас)
+```
+npm install git+https://github.com/macrulezru/pipeline-js.git
 ```
 
 ## Быстрый старт (чистый JS)
@@ -43,50 +60,57 @@ console.log(pipeline.getProgress());
 ```
 
 
-## Использование в React
 
+## React: хуки для интеграции
+
+### usePipelineProgress
 ```jsx
-import React, { useEffect, useState } from 'react';
-import { createRestClient, PipelineOrchestrator } from 'pipeline-js';
+import { usePipelineProgress } from 'pipeline-js/react';
+import { PipelineOrchestrator } from 'pipeline-js';
 
-const client = createRestClient({ baseURL: 'https://api.example.com' });
+const pipeline = new PipelineOrchestrator({ stages: [...] }, { baseURL: '...' });
+const progress = usePipelineProgress(pipeline);
+```
 
-export function PipelineProgress() {
-  const [progress, setProgress] = useState(() => ({ currentStage: 0, totalStages: 0, stageStatuses: [] }));
+### usePipelineRun
+```jsx
+import { usePipelineRun } from 'pipeline-js/react';
+const [run, { running, result, error }] = usePipelineRun(pipeline);
 
-  useEffect(() => {
-    const pipeline = new PipelineOrchestrator({
-      stages: [
-        {
-          key: 'getUser',
-          request: async () => client.get('/user'),
-        },
-        {
-          key: 'getPosts',
-          request: async (_, results) => client.get(`/posts?userId=${results[0].data.id}`),
-        },
-      ],
-    }, { baseURL: 'https://api.example.com' });
+// В компоненте:
+<button onClick={() => run()}>Старт</button>
+{running && <span>Выполняется...</span>}
+{result && <pre>{JSON.stringify(result)}</pre>}
+{error && <span style={{color:'red'}}>{String(error)}</span>}
+```
 
-    const unsubscribe = pipeline.subscribeProgress(setProgress);
+### useRestClient
+```jsx
+import { useRestClient } from 'pipeline-js/react';
+const api = useRestClient({ baseURL: '...' });
+```
 
-    // Запустить пайплайн (пример)
-    // pipeline.run();
+## Vue: composition-функции для интеграции
 
-    return () => unsubscribe();
-  }, []);
+### usePipelineProgress
+```js
+import { usePipelineProgress } from 'pipeline-js/vue';
+import { PipelineOrchestrator } from 'pipeline-js';
 
-  return (
-    <div>
-      <div>Текущий этап: {progress.currentStage + 1} / {progress.totalStages}</div>
-      <ul>
-        {progress.stageStatuses.map((status, idx) => (
-          <li key={idx}>Этап {idx + 1}: {status}</li>
-        ))}
-      </ul>
-    </div>
-  );
-}
+const pipeline = new PipelineOrchestrator({ stages: [...] }, { baseURL: '...' });
+const progress = usePipelineProgress(pipeline);
+```
+
+### usePipelineRun
+```js
+import { usePipelineRun } from 'pipeline-js/vue';
+const { run, running, result, error } = usePipelineRun(pipeline);
+```
+
+### useRestClient
+```js
+import { useRestClient } from 'pipeline-js/vue';
+const api = useRestClient({ baseURL: '...' });
 ```
 
 ## Использование в Vue 3
