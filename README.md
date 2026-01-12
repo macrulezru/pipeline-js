@@ -1,15 +1,6 @@
 
 # pipeline-js
 
-<p align="left">
-  <a href="https://github.com/macrulezru/pipeline-js"><img src="https://img.shields.io/github/stars/macrulezru/pipeline-js?style=social" alt="GitHub stars"></a>
-  <a href="https://github.com/macrulezru/pipeline-js"><img src="https://img.shields.io/github/forks/macrulezru/pipeline-js?style=social" alt="GitHub forks"></a>
-  <a href="https://github.com/macrulezru/pipeline-js/blob/master/LICENSE"><img src="https://img.shields.io/github/license/macrulezru/pipeline-js.svg" alt="License"></a>
-  <a href="https://www.npmjs.com/package/pipeline-js"><img src="https://img.shields.io/npm/v/pipeline-js.svg" alt="NPM version"></a>
-  <a href="https://www.npmjs.com/package/pipeline-js"><img src="https://img.shields.io/npm/dm/pipeline-js.svg" alt="NPM downloads"></a>
-</p>
-
-
 Модуль для работы с REST API, пайплайнами запросов и отслеживанием прогресса. Не зависит от Vue/React, но легко интегрируется в любые проекты.
 
 
