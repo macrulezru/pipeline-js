@@ -13,7 +13,7 @@ npm i rest-pipeline-js
 ## Быстрый старт (чистый JS)
 
 ```js
-const { createRestClient, PipelineOrchestrator } = require('pipeline-js');
+const { createRestClient, PipelineOrchestrator } = require('rest-pipeline-js');
 
 // Создание REST клиента
 const client = createRestClient({ baseURL: 'https://api.example.com' });
@@ -50,8 +50,8 @@ console.log(pipeline.getProgress());
 
 ### usePipelineProgress
 ```jsx
-import { usePipelineProgress } from 'pipeline-js/react';
-import { PipelineOrchestrator } from 'pipeline-js';
+import { usePipelineProgress } from 'rest-pipeline-js/react';
+import { PipelineOrchestrator } from 'rest-pipeline-js';
 
 const pipeline = new PipelineOrchestrator({ stages: [...] }, { baseURL: '...' });
 const progress = usePipelineProgress(pipeline);
@@ -59,7 +59,7 @@ const progress = usePipelineProgress(pipeline);
 
 ### usePipelineRun
 ```jsx
-import { usePipelineRun } from 'pipeline-js/react';
+import { usePipelineRun } from 'rest-pipeline-js/react';
 const [run, { running, result, error }] = usePipelineRun(pipeline);
 
 // В компоненте:
@@ -71,7 +71,7 @@ const [run, { running, result, error }] = usePipelineRun(pipeline);
 
 ### useRestClient
 ```jsx
-import { useRestClient } from 'pipeline-js/react';
+import { useRestClient } from 'rest-pipeline-js/react';
 const api = useRestClient({ baseURL: '...' });
 ```
 
@@ -79,8 +79,8 @@ const api = useRestClient({ baseURL: '...' });
 
 ### usePipelineProgress
 ```js
-import { usePipelineProgress } from 'pipeline-js/vue';
-import { PipelineOrchestrator } from 'pipeline-js';
+import { usePipelineProgress } from 'rest-pipeline-js/vue';
+import { PipelineOrchestrator } from 'rest-pipeline-js';
 
 const pipeline = new PipelineOrchestrator({ stages: [...] }, { baseURL: '...' });
 const progress = usePipelineProgress(pipeline);
@@ -88,20 +88,20 @@ const progress = usePipelineProgress(pipeline);
 
 ### usePipelineRun
 ```js
-import { usePipelineRun } from 'pipeline-js/vue';
+import { usePipelineRun } from 'rest-pipeline-js/vue';
 const { run, running, result, error } = usePipelineRun(pipeline);
 ```
 
 ### useRestClient
 ```js
-import { useRestClient } from 'pipeline-js/vue';
+import { useRestClient } from 'rest-pipeline-js/vue';
 const api = useRestClient({ baseURL: '...' });
 ```
 
 ## Использование в Vue 3
 
 ```js
-import { createRestClient, PipelineOrchestrator } from 'pipeline-js';
+import { createRestClient, PipelineOrchestrator } from 'rest-pipeline-js';
 import { ref, onUnmounted } from 'vue';
 
 const client = createRestClient({ baseURL: 'https://api.example.com' });

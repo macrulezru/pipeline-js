@@ -15,6 +15,14 @@ export class ProgressTracker {
     };
   }
 
+  /**
+   * Возвращает текущий снимок состояния прогресса (не реактивный).
+   * Для отслеживания изменений используйте subscribeProgress.
+   */
+  getProgressRef() {
+    return this.progress;
+  }
+
   updateStage(stage: number, status: PipelineProgress['stageStatuses'][number]) {
     this.progress.stageStatuses[stage] = status;
     this.progress.currentStage = stage;
