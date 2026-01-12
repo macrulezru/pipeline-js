@@ -1,9 +1,9 @@
 {
   "name": "rest-pipeline-js",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Pipeline Orchestration Utilities for JavaScript REST API Clients",
   "main": "dist/index.js",
-  "types": "src/types.ts",
+  "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
     "test": "echo \"No tests specified\" && exit 0"
