@@ -4,11 +4,16 @@ export declare class ProgressTracker {
     private progress;
     private listeners;
     constructor(totalStages: number);
+    /**
+     * Возвращает текущий снимок состояния прогресса (не реактивный).
+     * Для отслеживания изменений используйте subscribeProgress.
+     */
+    getProgressRef(): PipelineProgress;
     updateStage(stage: number, status: PipelineProgress['stageStatuses'][number]): void;
     getProgress(): {
         currentStage: number;
         totalStages: number;
-        stageStatuses: Array<"pending" | "in-progress" | "success" | "error" | "skipped">;
+        stageStatuses: Array<import("./types").PipelineStepStatus>;
     };
     subscribe(listener: ProgressListener): () => void;
     private notify;

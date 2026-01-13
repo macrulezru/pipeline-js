@@ -1,5 +1,8 @@
+## Утсновка
 
-
+```sh
+npm i rest-pipeline-js
+```
 
 ## Возможности и API
 
