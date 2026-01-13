@@ -3,6 +3,8 @@ import { ErrorHandler } from './error-handler';
 import { ProgressTracker } from './progress-tracker';
 import { RequestExecutor } from './request-executor';
 
+
+import { toApiError } from './rest-client';
 import type { PipelineConfig, PipelineResult } from './types';
 
 /**
@@ -180,7 +182,6 @@ export class PipelineOrchestrator {
       if (!handled && stage) {
         handled = this.errorHandler.handle(err, stage.key);
       }
-      const { toApiError } = await import('./rest-client.js');
       const apiError = toApiError(handled ?? err);
       this.stageResults[key] = { status: 'error', error: apiError };
       this.notifyStageResults();
@@ -323,7 +324,6 @@ export class PipelineOrchestrator {
     for (let i = 0; i < this.config.stages.length; i++) {
       if (signal.aborted) {
         // Прерываем выполнение, если был вызван abort
-        const { toApiError } = await import('./rest-client.js');
         const apiError = toApiError({ message: 'Pipeline aborted', code: 'ABORTED' });
         const key = this.config.stages[i]?.key || `stage${i}`;
         this.stageResults[key] = { status: 'error', error: apiError };
@@ -428,7 +428,6 @@ export class PipelineOrchestrator {
           handled = this.errorHandler.handle(err, stage.key);
         }
         // Унификация: всегда ApiError
-        const { toApiError } = await import('./rest-client.js');
         const apiError = toApiError(handled ?? err);
         this.stageResults[key] = { status: 'error', error: apiError };
         this.notifyStageResults();
