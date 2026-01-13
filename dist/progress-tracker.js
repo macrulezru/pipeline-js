@@ -10,6 +10,13 @@ class ProgressTracker {
             stageStatuses: Array(totalStages).fill('pending'),
         };
     }
+    /**
+     * Возвращает текущий снимок состояния прогресса (не реактивный).
+     * Для отслеживания изменений используйте subscribeProgress.
+     */
+    getProgressRef() {
+        return this.progress;
+    }
     updateStage(stage, status) {
         this.progress.stageStatuses[stage] = status;
         this.progress.currentStage = stage;
