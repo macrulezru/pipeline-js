@@ -10,7 +10,7 @@ import type { PipelineOrchestrator } from '../src/pipeline-orchestrator';
  */
 export function usePipelineStepEvent(orchestrator: PipelineOrchestrator, stepKey: string, eventType: 'success' | 'error' | 'progress') {
   const [event, setEvent] = useState<any>(null);
-  const handlerRef = useRef<any>();
+  const handlerRef = useRef<any>(null);
   useEffect(() => {
     handlerRef.current = (payload: any) => setEvent(payload);
     const eventName = `step:${stepKey}:${eventType}`;
