@@ -1,6 +1,6 @@
 {
   "name": "rest-pipeline-js",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "Pipeline Orchestration Utilities for JavaScript REST API Clients",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
