@@ -4,6 +4,7 @@ exports.PipelineOrchestrator = void 0;
 const error_handler_1 = require("./error-handler");
 const progress_tracker_1 = require("./progress-tracker");
 const request_executor_1 = require("./request-executor");
+const rest_client_1 = require("./rest-client");
 class PipelineOrchestrator {
     constructor(config, httpConfig, sharedData = {}, options = {}) {
         var _a;
@@ -123,8 +124,7 @@ class PipelineOrchestrator {
             if (!handled && stage) {
                 handled = this.errorHandler.handle(err, stage.key);
             }
-            const { toApiError } = await import('./rest-client.js');
-            const apiError = toApiError(handled !== null && handled !== void 0 ? handled : err);
+            const apiError = (0, rest_client_1.toApiError)(handled !== null && handled !== void 0 ? handled : err);
             this.stageResults[key] = { status: 'error', error: apiError };
             this.notifyStageResults();
             this.progress.updateStage(i, 'error');
@@ -248,8 +248,7 @@ class PipelineOrchestrator {
         for (let i = 0; i < this.config.stages.length; i++) {
             if (signal.aborted) {
                 // Прерываем выполнение, если был вызван abort
-                const { toApiError } = await import('./rest-client.js');
-                const apiError = toApiError({ message: 'Pipeline aborted', code: 'ABORTED' });
+                const apiError = (0, rest_client_1.toApiError)({ message: 'Pipeline aborted', code: 'ABORTED' });
                 const key = ((_a = this.config.stages[i]) === null || _a === void 0 ? void 0 : _a.key) || `stage${i}`;
                 this.stageResults[key] = { status: 'error', error: apiError };
                 this.notifyStageResults();
@@ -340,8 +339,7 @@ class PipelineOrchestrator {
                     handled = this.errorHandler.handle(err, stage.key);
                 }
                 // Унификация: всегда ApiError
-                const { toApiError } = await import('./rest-client.js');
-                const apiError = toApiError(handled !== null && handled !== void 0 ? handled : err);
+                const apiError = (0, rest_client_1.toApiError)(handled !== null && handled !== void 0 ? handled : err);
                 this.stageResults[key] = { status: 'error', error: apiError };
                 this.notifyStageResults();
                 this.progress.updateStage(i, 'error');
