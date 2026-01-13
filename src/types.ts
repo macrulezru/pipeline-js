@@ -72,33 +72,81 @@ export type RestRequestConfig = import('axios').AxiosRequestConfig & {
   skipRateLimit?: boolean;
   requestId?: string;
 };
-// Типы для конвейерной системы REST API
 
-export type PipelineStageConfig<Input, Output> = {
+/**
+ * Конфиг одного шага (этапа) pipeline
+ * @template Input Тип входных данных шага
+ * @template Output Тип результата шага
+ */
+export type PipelineStageConfig<Input = any, Output = any> = {
+  /** Уникальный ключ шага */
   key: string;
-  request: (input: Input, allResults?: any) => Promise<Output>;
+  /** Асинхронная функция-запрос шага */
+  request: (input: Input, allResults?: Record<string, PipelineStepResult>) => Promise<Output>;
+  /** Условие выполнения шага */
   condition?: (
     input: Input,
-    prevResults: any,
+    prevResults: Record<string, PipelineStepResult>,
     sharedData?: Record<string, any>,
   ) => boolean;
+  /** Количество попыток при ошибке */
   retryCount?: number;
+  /** Таймаут шага (мс) */
   timeoutMs?: number;
+  /** Обработчик ошибок шага */
   errorHandler?: (error: any, stageKey: string, sharedData?: Record<string, any>) => any;
 };
 
-export type PipelineConfig = {
-  stages: PipelineStageConfig<any, any>[];
+
+/**
+ * Статус выполнения шага pipeline
+ */
+export type PipelineStepStatus = 'pending' | 'loading' | 'success' | 'error' | 'skipped';
+
+
+/**
+ * Результат выполнения шага pipeline
+ */
+export type PipelineStepResult = {
+  /** Статус шага */
+  status: PipelineStepStatus;
+  /** Данные результата (если успех) */
+  data?: any;
+  /** Ошибка (если error) */
+  error?: import('./types').ApiError;
 };
 
+
+/**
+ * Конфиг всего pipeline (массив этапов)
+ */
+export type PipelineConfig = {
+  stages: PipelineStageConfig[];
+};
+
+
+/**
+ * Прогресс выполнения pipeline
+ */
 export type PipelineProgress = {
   currentStage: number;
   totalStages: number;
-  stageStatuses: Array<'pending' | 'in-progress' | 'success' | 'error' | 'skipped'>;
+  stageStatuses: Array<PipelineStepStatus>;
 };
 
+
+/**
+ * Результаты всех шагов pipeline (ключ — имя шага)
+ */
+export type PipelineStageResults = Record<string, PipelineStepResult>;
+
+
+/**
+ * Итоговый результат выполнения pipeline
+ */
 export type PipelineResult = {
-  results: any[];
-  errors: any[];
+  /** Результаты по шагам */
+  stageResults: PipelineStageResults;
+  /** true, если pipeline завершился успешно */
   success: boolean;
 };
