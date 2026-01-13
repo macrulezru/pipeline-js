@@ -1,4 +1,4 @@
-## Утсновка
+## Установка
 
 ```sh
 npm i rest-pipeline-js
@@ -37,7 +37,7 @@ async function fetchUser(id) {
 import { PipelineOrchestrator } from 'rest-pipeline-js';
 
 const pipelineConfig = {
-	steps: [
+	stages: [
 		{
 			key: 'step1',
 			command: '/api/step1',
