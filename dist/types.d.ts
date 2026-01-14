@@ -35,7 +35,7 @@ export interface MetricsHandler {
     }) => void;
 }
 export interface HttpConfig {
-    baseURL: string;
+    baseURL?: string;
     timeout?: number;
     headers?: Record<string, string>;
     withCredentials?: boolean;
@@ -56,7 +56,7 @@ export interface ApiResponse<T = unknown> {
     statusText: string;
     headers: Record<string, string>;
 }
-export type RestRequestConfig = import('axios').AxiosRequestConfig & {
+export type RestRequestConfig = import("axios").AxiosRequestConfig & {
     useCache?: boolean;
     cacheTtlMs?: number;
     cacheKey?: string;
@@ -72,7 +72,7 @@ export type PipelineStageConfig<Input = any, Output = any> = {
     /** Уникальный ключ шага */
     key: string;
     /** Асинхронная функция-запрос шага */
-    request: (input: Input, allResults?: Record<string, PipelineStepResult>) => Promise<Output>;
+    request: (input: Input, allResults?: Record<string, PipelineStepResult>, shared?: Record<string, any>) => Promise<Output>;
     /** Условие выполнения шага */
     condition?: (input: Input, prevResults: Record<string, PipelineStepResult>, sharedData?: Record<string, any>) => boolean;
     /** Количество попыток при ошибке */
@@ -85,7 +85,7 @@ export type PipelineStageConfig<Input = any, Output = any> = {
 /**
  * Статус выполнения шага pipeline
  */
-export type PipelineStepStatus = 'pending' | 'loading' | 'success' | 'error' | 'skipped';
+export type PipelineStepStatus = "pending" | "loading" | "success" | "error" | "skipped";
 /**
  * Результат выполнения шага pipeline
  */
@@ -95,7 +95,7 @@ export type PipelineStepResult = {
     /** Данные результата (если успех) */
     data?: any;
     /** Ошибка (если error) */
-    error?: import('./types').ApiError;
+    error?: import("./types").ApiError;
 };
 /**
  * Конфиг всего pipeline (массив этапов)

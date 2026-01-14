@@ -1,14 +1,21 @@
-// TypeScript configuration for building the module
 {
   "compilerOptions": {
     "target": "ES2019",
-    "module": "NodeNext",
-    "moduleResolution": "nodenext",
+    "module": "ESNext",
+    "moduleResolution": "Node",
     "declaration": true,
     "outDir": "dist",
+    "rootDir": "src",
     "strict": true,
     "esModuleInterop": true,
-    "forceConsistentCasingInFileNames": true
+    "forceConsistentCasingInFileNames": true,
+    "typeRoots": ["./node_modules/@types"],
+    "composite": true
   },
-  "include": ["src/**/*"]
+  "include": ["src/*.ts"],
+  "references": [
+    { "path": "src" },
+    { "path": "src/vue" },
+    { "path": "src/react" }
+  ]
 }

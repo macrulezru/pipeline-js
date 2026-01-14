@@ -1,4 +1,4 @@
-import type { PipelineConfig } from './types';
+import type { PipelineConfig } from "./types";
 /**
  * Событие шага pipeline (для хуков)
  */
@@ -8,13 +8,13 @@ export type PipelineStepEvent = {
     /** Ключ шага */
     stepKey: string;
     /** Статус шага */
-    status: import('./types').PipelineStepStatus;
+    status: import("./types").PipelineStepStatus;
     /** Данные результата (если успех) */
     data?: any;
     /** Ошибка (если error) */
-    error?: import('./types').ApiError;
+    error?: import("./types").ApiError;
     /** Снимок всех результатов на момент события */
-    stageResults: Record<string, import('./types').PipelineStepResult>;
+    stageResults: Record<string, import("./types").PipelineStepResult>;
 };
 /**
  * Callback для подписки на события этапов pipeline
@@ -38,13 +38,18 @@ export declare class PipelineOrchestrator {
     /** AbortController для отмены пайплайна */
     private abortController;
     private config;
-    constructor(config: PipelineConfig, httpConfig: import('./types').HttpConfig, sharedData?: Record<string, unknown>, options?: {
-        autoReset?: boolean;
+    constructor(params: {
+        config: PipelineConfig;
+        httpConfig?: import("./types").HttpConfig;
+        sharedData?: Record<string, unknown>;
+        options?: {
+            autoReset?: boolean;
+        };
     });
     /**
      * Подписка на изменения stageResults (реактивно)
      */
-    subscribeStageResults(listener: (results: Record<string, import('./types').PipelineStepResult>) => void): () => void;
+    subscribeStageResults(listener: (results: Record<string, import("./types").PipelineStepResult>) => void): () => void;
     /**
      * Универсальная подписка на события: step:<key>, progress, log и др.
      */
@@ -69,9 +74,9 @@ export declare class PipelineOrchestrator {
      * @param options дополнительные опции (например, onStepPause, externalSignal)
      */
     rerunStep(stepKey: string, options?: {
-        onStepPause?: (stepIndex: number, stepResult: unknown, stageResults: Record<string, import('./types').PipelineStepResult>) => Promise<unknown> | unknown;
+        onStepPause?: (stepIndex: number, stepResult: unknown, stageResults: Record<string, import("./types").PipelineStepResult>) => Promise<unknown> | unknown;
         externalSignal?: AbortSignal;
-    }): Promise<import('./types').PipelineStepResult | undefined>;
+    }): Promise<import("./types").PipelineStepResult | undefined>;
     /**
      * Отменить выполнение пайплайна (вызывает ошибку AbortError)
      */
@@ -100,11 +105,11 @@ export declare class PipelineOrchestrator {
      * @param listener функция-обработчик изменений
      * @returns функция для отписки
      */
-    subscribeProgress(listener: (progress: import('./types').PipelineProgress) => void): () => void;
+    subscribeProgress(listener: (progress: import("./types").PipelineProgress) => void): () => void;
     /**
      * Подписка на прогресс с фильтрацией по этапу (stepKey) или общий
      */
-    subscribeStepProgress(stepKey: string, listener: (status: import('./types').PipelineStepStatus) => void): () => void;
+    subscribeStepProgress(stepKey: string, listener: (status: import("./types").PipelineStepStatus) => void): () => void;
     /**
      * Получить текущий прогресс выполнения pipeline (snapshot, не реактивный)
      */
@@ -123,5 +128,9 @@ export declare class PipelineOrchestrator {
      * @param onStepPause callback для пользовательской паузы между шагами
      * @param externalSignal внешний AbortSignal (опционально)
      */
-    run(onStepPause?: (stepIndex: number, stepResult: unknown, stageResults: Record<string, import('./types').PipelineStepResult>) => Promise<unknown> | unknown, externalSignal?: AbortSignal): Promise<import('./types').PipelineResult>;
+    run(onStepPause?: (stepIndex: number, stepResult: unknown, stageResults: Record<string, import("./types").PipelineStepResult>) => Promise<unknown> | unknown, externalSignal?: AbortSignal): Promise<import("./types").PipelineResult>;
+    /**
+     * Очистить stageResults и уведомить подписчиков
+     */
+    clearStageResults(): void;
 }
