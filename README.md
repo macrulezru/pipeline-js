@@ -332,7 +332,7 @@ const { run, running, result, error } = usePipelineRunVue(orchestrator);
 
 ---
 
-Composition functions for Vue 3:
+Composition functions for Vue 3 (import from 'rest-pipeline-js'):
 
 - **usePipelineProgressVue(orchestrator)** — reactive pipeline progress (Ref<PipelineProgress>)
 - **usePipelineRunVue(orchestrator)** — run pipeline and get reactive status (run, running, result, error)
@@ -379,7 +379,7 @@ export function PipelineComponent() {
 
 ---
 
-Hooks for React:
+Hooks for React (import from 'rest-pipeline-js'):
 
 - **usePipelineProgressReact(orchestrator)** — subscribe to pipeline progress (PipelineProgress)
 - **usePipelineRunReact(orchestrator)** — run pipeline and get status ([run, { running, result, error }])
@@ -784,14 +784,14 @@ console.log(error); // { type: 'unknown', error: [Error], stageKey: 'step1' }
 <script setup>
 import { ref } from 'vue';
 import { PipelineOrchestrator } from 'rest-pipeline-js';
-import { usePipelineProgress, usePipelineRun } from 'rest-pipeline-js/vue';
+import { usePipelineProgressVue, usePipelineRunVue } from 'rest-pipeline-js';
 
 const pipelineConfig = { stages: [/* ... */] };
 const httpConfig = { baseURL: 'https://api.example.com' };
 const orchestrator = new PipelineOrchestrator(pipelineConfig, httpConfig);
 
-const progress = usePipelineProgress(orchestrator);
-const { run, running, result, error } = usePipelineRun(orchestrator);
+const progress = usePipelineProgressVue(orchestrator);
+const { run, running, result, error } = usePipelineRunVue(orchestrator);
 </script>
 
 <template>
@@ -806,14 +806,14 @@ const { run, running, result, error } = usePipelineRun(orchestrator);
 
 ---
 
-Экспортируются composition-функции для интеграции rest-pipeline-js с Vue 3:
+Экспортируются composition-функции для интеграции rest-pipeline-js с Vue 3 (импортировать из 'rest-pipeline-js'):
 
-- **usePipelineProgress(orchestrator)** — реактивный прогресс pipeline (Ref<PipelineProgress>)
-- **usePipelineRun(orchestrator)** — запуск pipeline и реактивные статусы (run, running, result, error)
-- **usePipelineStepEvent(orchestrator, stepKey, eventType)** — подписка на события шага (успех, ошибка, прогресс)
-- **usePipelineLogs(orchestrator)** — реактивные логи pipeline
-- **useRerunPipelineStep(orchestrator)** — функция для повторного запуска шага
-- **useRestClient(config)** — реактивный REST клиент (computed)
+- **usePipelineProgressVue(orchestrator)** — реактивный прогресс pipeline (Ref<PipelineProgress>)
+- **usePipelineRunVue(orchestrator)** — запуск pipeline и реактивные статусы (run, running, result, error)
+- **usePipelineStepEventVue(orchestrator, stepKey, eventType)** — подписка на события шага (успех, ошибка, прогресс)
+- **usePipelineLogsVue(orchestrator)** — реактивные логи pipeline
+- **useRerunPipelineStepVue(orchestrator)** — функция для повторного запуска шага
+- **useRestClientVue(config)** — реактивный REST клиент (computed)
 
 ---
 
@@ -824,7 +824,10 @@ const { run, running, result, error } = usePipelineRun(orchestrator);
 ```jsx
 import React from "react";
 import { PipelineOrchestrator } from "rest-pipeline-js";
-import { usePipelineProgress, usePipelineRun } from "rest-pipeline-js/react";
+import {
+  usePipelineProgressReact,
+  usePipelineRunReact,
+} from "rest-pipeline-js";
 
 const pipelineConfig = {
   stages: [
@@ -835,8 +838,8 @@ const httpConfig = { baseURL: "https://api.example.com" };
 const orchestrator = new PipelineOrchestrator(pipelineConfig, httpConfig);
 
 export function PipelineComponent() {
-  const progress = usePipelineProgress(orchestrator);
-  const [run, { running, result, error }] = usePipelineRun(orchestrator);
+  const progress = usePipelineProgressReact(orchestrator);
+  const [run, { running, result, error }] = usePipelineRunReact(orchestrator);
 
   return (
     <div>
@@ -853,14 +856,14 @@ export function PipelineComponent() {
 
 ---
 
-Экспортируются хуки для интеграции rest-pipeline-js с React:
+Экспортируются хуки для интеграции rest-pipeline-js с React (импортировать из 'rest-pipeline-js'):
 
-- **usePipelineProgress(orchestrator)** — подписка на прогресс pipeline (PipelineProgress)
-- **usePipelineRun(orchestrator)** — запуск pipeline и статусы ([run, { running, result, error }])
-- **usePipelineStepEvent(orchestrator, stepKey, eventType)** — подписка на события шага (success/error/progress)
-- **usePipelineLogs(orchestrator)** — подписка на логи pipeline
-- **useRerunPipelineStep(orchestrator)** — функция для повторного запуска шага
-- **useRestClient(config)** — мемоизированный REST клиент
+- **usePipelineProgressReact(orchestrator)** — подписка на прогресс pipeline (PipelineProgress)
+- **usePipelineRunReact(orchestrator)** — запуск pipeline и статусы ([run, { running, result, error }])
+- **usePipelineStepEventReact(orchestrator, stepKey, eventType)** — подписка на события шага (success/error/progress)
+- **usePipelineLogsReact(orchestrator)** — подписка на логи pipeline
+- **useRerunPipelineStepReact(orchestrator)** — функция для повторного запуска шага
+- **useRestClientReact(config)** — мемоизированный REST клиент
 
 ---
 
