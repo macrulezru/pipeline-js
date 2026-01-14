@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import "./demo.css";
 
-import { isRef, ref } from "vue";
-import { PipelineOrchestrator } from "../../dist/pipeline-orchestrator";
-import { usePipelineRun, usePipelineProgress } from "../../dist/vue";
+import { ref } from "vue";
+import {
+  PipelineOrchestrator,
+  usePipelineRunVue,
+  usePipelineProgressVue,
+} from "rest-pipeline-js";
 import { computed } from "vue";
 
 const pipelineConfig = {
@@ -13,7 +16,7 @@ const pipelineConfig = {
     },
     {
       key: "availability",
-      request: (prev, allResults, sharedData) => {
+      request: async (prev: any, _allResults: any, sharedData: any) => {
         const points = prev.points;
         if (!Array.isArray(points) || points.length === 0)
           throw new Error("No points");
@@ -31,10 +34,10 @@ const pipelineConfig = {
     },
     {
       key: "services",
-      request: (prev, allResults, sharedData) => {
+      request: async (prev: any, _allResults: any, sharedData: any) => {
         sharedData.apiDate = prev["api-date"];
         const direction = prev.directions.find(
-          (item) => item.date === sharedData.apiDate
+          (item: any) => item.date === sharedData.apiDate
         );
         let randomFlight = null;
         if (
@@ -54,7 +57,7 @@ const pipelineConfig = {
     },
     {
       key: "seatmap",
-      request: (prev, allResults, sharedData) => {
+      request: async (_prev: any, _allResults: any, sharedData: any) => {
         return `seatmap/${sharedData.apiDate}/${sharedData.flightNumber}`;
       },
     },
@@ -69,9 +72,9 @@ const orchestrator = new PipelineOrchestrator({
   },
 });
 
-const { run, running, error, stageResults } = usePipelineRun(orchestrator);
+const { run, running, error, stageResults } = usePipelineRunVue(orchestrator);
 
-const progress = usePipelineProgress(orchestrator);
+const progress = usePipelineProgressVue(orchestrator);
 
 const totalStages = pipelineConfig.stages.length;
 
