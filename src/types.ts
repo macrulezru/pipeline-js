@@ -103,6 +103,27 @@ export type PipelineStageConfig<Input = any, Output = any> = {
     stageKey: string,
     sharedData?: Record<string, any>
   ) => any;
+  /**
+   * Хук before: вызывается перед выполнением запроса этапа (request).
+   * Может синхронно или асинхронно модифицировать входные данные prev/allResults/sharedData.
+   * Возвращаемое значение будет передано в request вместо prev (если возвращено !== undefined).
+   */
+  before?: (
+    prev: Input,
+    allResults: Record<string, PipelineStepResult>,
+    shared?: Record<string, any>
+  ) => Promise<Input | void> | Input | void;
+
+  /**
+   * Хук post-processing: вызывается после получения результата (до перехода к следующему этапу).
+   * Может синхронно или асинхронно модифицировать результат шага.
+   * Возвращаемое значение будет записано как результат шага (data).
+   */
+  after?: (
+    result: Output,
+    allResults: Record<string, PipelineStepResult>,
+    shared?: Record<string, any>
+  ) => Promise<Output> | Output;
 };
 
 /**

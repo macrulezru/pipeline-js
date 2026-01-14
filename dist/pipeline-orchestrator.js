@@ -390,10 +390,18 @@ export class PipelineOrchestrator {
             try {
                 let stepResult;
                 // Всегда передаём (prev, allResults) в request — best practice для pipeline
+                // --- before (pre-processing) ---
+                let prevInput = i > 0
+                    ? (_c = this.stageResults[this.config.stages[i - 1].key]) === null || _c === void 0 ? void 0 : _c.data
+                    : undefined;
+                if (typeof stage.before === "function") {
+                    const beforeResult = await stage.before(prevInput, this.stageResults, this.sharedData);
+                    if (typeof beforeResult !== "undefined") {
+                        prevInput = beforeResult;
+                    }
+                }
                 if (typeof stage.request === "function") {
-                    const reqResult = await stage.request(i > 0
-                        ? (_c = this.stageResults[this.config.stages[i - 1].key]) === null || _c === void 0 ? void 0 : _c.data
-                        : undefined, this.stageResults, this.sharedData);
+                    const reqResult = await stage.request(prevInput, this.stageResults, this.sharedData);
                     if (typeof reqResult === "string") {
                         // Если вернули строку — считаем это endpoint и делаем автоматический запрос
                         const res = await this.executor.execute(reqResult, undefined, stage.retryCount, stage.timeoutMs);
@@ -409,6 +417,10 @@ export class PipelineOrchestrator {
                 }
                 else {
                     stepResult = undefined;
+                }
+                // --- after (post-processing) ---
+                if (typeof stage.after === "function") {
+                    stepResult = await stage.after(stepResult, this.stageResults, this.sharedData);
                 }
                 // --- Пользовательская пауза/подтверждение/изменение результата ---
                 if (onStepPause) {

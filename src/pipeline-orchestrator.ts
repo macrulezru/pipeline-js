@@ -513,11 +513,25 @@ export class PipelineOrchestrator {
       try {
         let stepResult: unknown;
         // Всегда передаём (prev, allResults) в request — best practice для pipeline
+        // --- before (pre-processing) ---
+        let prevInput =
+          i > 0
+            ? this.stageResults[this.config.stages[i - 1].key]?.data
+            : undefined;
+        if (typeof stage.before === "function") {
+          const beforeResult = await stage.before(
+            prevInput,
+            this.stageResults,
+            this.sharedData
+          );
+          if (typeof beforeResult !== "undefined") {
+            prevInput = beforeResult;
+          }
+        }
+
         if (typeof stage.request === "function") {
           const reqResult = await stage.request(
-            i > 0
-              ? this.stageResults[this.config.stages[i - 1].key]?.data
-              : undefined,
+            prevInput,
             this.stageResults,
             this.sharedData
           );
@@ -543,6 +557,15 @@ export class PipelineOrchestrator {
           stepResult = res.data;
         } else {
           stepResult = undefined;
+        }
+
+        // --- after (post-processing) ---
+        if (typeof stage.after === "function") {
+          stepResult = await stage.after(
+            stepResult,
+            this.stageResults,
+            this.sharedData
+          );
         }
 
         // --- Пользовательская пауза/подтверждение/изменение результата ---
