@@ -283,12 +283,12 @@ console.log(error); // { type: 'unknown', error: [Error], stageKey: 'step1' }
 <script setup>
 import { ref } from 'vue';
 import { PipelineOrchestrator } from 'rest-pipeline-js';
-import { usePipelineProgress, usePipelineRun } from 'rest-pipeline-js/vue';
+import { usePipelineProgressVue, usePipelineRunVue } from 'rest-pipeline-js';
 const pipelineConfig = { stages: [/* ... */] };
 const httpConfig = { baseURL: 'https://api.example.com' };
 const orchestrator = new PipelineOrchestrator(pipelineConfig, httpConfig);
-const progress = usePipelineProgress(orchestrator);
-const { run, running, result, error } = usePipelineRun(orchestrator);
+const progress = usePipelineProgressVue(orchestrator);
+const { run, running, result, error } = usePipelineRunVue(orchestrator);
 </script>
 <template>
   <div>
@@ -304,12 +304,12 @@ const { run, running, result, error } = usePipelineRun(orchestrator);
 
 Composition functions for Vue 3:
 
-- **usePipelineProgress(orchestrator)** — reactive pipeline progress (Ref<PipelineProgress>)
-- **usePipelineRun(orchestrator)** — run pipeline and get reactive status (run, running, result, error)
-- **usePipelineStepEvent(orchestrator, stepKey, eventType)** — subscribe to stage events (success, error, progress)
-- **usePipelineLogs(orchestrator)** — reactive pipeline logs
-- **useRerunPipelineStep(orchestrator)** — rerun a stage
-- **useRestClient(config)** — reactive REST client (computed)
+- **usePipelineProgressVue(orchestrator)** — reactive pipeline progress (Ref<PipelineProgress>)
+- **usePipelineRunVue(orchestrator)** — run pipeline and get reactive status (run, running, result, error)
+- **usePipelineStepEventVue(orchestrator, stepKey, eventType)** — subscribe to stage events (success, error, progress)
+- **usePipelineLogsVue(orchestrator)** — reactive pipeline logs
+- **useRerunPipelineStepVue(orchestrator)** — rerun a stage
+- **useRestClientVue(config)** — reactive REST client (computed)
 
 ---
 
@@ -320,7 +320,10 @@ Composition functions for Vue 3:
 ```jsx
 import React from "react";
 import { PipelineOrchestrator } from "rest-pipeline-js";
-import { usePipelineProgress, usePipelineRun } from "rest-pipeline-js/react";
+import {
+  usePipelineProgressReact,
+  usePipelineRunReact,
+} from "rest-pipeline-js";
 const pipelineConfig = {
   stages: [
     /* ... */
@@ -329,8 +332,8 @@ const pipelineConfig = {
 const httpConfig = { baseURL: "https://api.example.com" };
 const orchestrator = new PipelineOrchestrator(pipelineConfig, httpConfig);
 export function PipelineComponent() {
-  const progress = usePipelineProgress(orchestrator);
-  const [run, { running, result, error }] = usePipelineRun(orchestrator);
+  const progress = usePipelineProgressReact(orchestrator);
+  const [run, { running, result, error }] = usePipelineRunReact(orchestrator);
   return (
     <div>
       <div>Current stage: {progress.currentStage}</div>
@@ -348,12 +351,12 @@ export function PipelineComponent() {
 
 Hooks for React:
 
-- **usePipelineProgress(orchestrator)** — subscribe to pipeline progress (PipelineProgress)
-- **usePipelineRun(orchestrator)** — run pipeline and get status ([run, { running, result, error }])
-- **usePipelineStepEvent(orchestrator, stepKey, eventType)** — subscribe to stage events (success/error/progress)
-- **usePipelineLogs(orchestrator)** — subscribe to pipeline logs
-- **useRerunPipelineStep(orchestrator)** — rerun a stage
-- **useRestClient(config)** — memoized REST client
+- **usePipelineProgressReact(orchestrator)** — subscribe to pipeline progress (PipelineProgress)
+- **usePipelineRunReact(orchestrator)** — run pipeline and get status ([run, { running, result, error }])
+- **usePipelineStepEventReact(orchestrator, stepKey, eventType)** — subscribe to stage events (success/error/progress)
+- **usePipelineLogsReact(orchestrator)** — subscribe to pipeline logs
+- **useRerunPipelineStepReact(orchestrator)** — rerun a stage
+- **useRestClientReact(config)** — memoized REST client
 
 ---
 

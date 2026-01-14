@@ -82,7 +82,7 @@ export type PipelineStageConfig<Input = any, Output = any> = {
   /** Уникальный ключ шага */
   key: string;
   /** Асинхронная функция-запрос шага */
-  request: (
+  request?: (
     input: Input,
     allResults?: Record<string, PipelineStepResult>,
     shared?: Record<string, any>

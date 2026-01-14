@@ -12,10 +12,6 @@
     "typeRoots": ["./node_modules/@types"],
     "composite": true
   },
-  "include": ["src/*.ts"],
-  "references": [
-    { "path": "src" },
-    { "path": "src/vue" },
-    { "path": "src/react" }
-  ]
+  "include": ["src/**/*.ts"],
+  "references": [{ "path": "src" }]
 }
