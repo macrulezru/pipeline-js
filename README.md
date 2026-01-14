@@ -192,9 +192,39 @@ Main class for building and managing a pipeline of sequential stages.
 - `method` — HTTP method
 - `dependsOn` — array of stage keys this depends on
 - `condition(prev, allResults, sharedData)` — condition function
-- `request(prev, allResults)` — custom request function
+- `before(prev, allResults, sharedData)` — pre-processing hook (called before request; can modify input)
+- `request(prev, allResults, sharedData)` — custom request function. If before returns a value, it will be passed to request instead of prev.
+- `after(result, allResults, sharedData)` — post-processing hook (called after request, before next stage; can modify result)
 - `retryCount`, `timeoutMs` — per-stage retry/timeout
 - `errorHandler(error, key, sharedData)` — custom error handler
+
+##### Step execution flow diagram
+
+```
+┌────────────┐
+│  before    │
+│ (optional) │
+└─────┬──────┘
+      │
+      ▼
+┌────────────┐
+│  request   │
+└─────┬──────┘
+      │
+      ▼
+┌────────────┐
+│  after     │
+│ (optional) │
+└─────┬──────┘
+      │
+      ▼
+┌────────────┐
+│ next step  │
+└────────────┘
+
+If an error occurs at any stage:
+  └─► errorHandler (if defined) → error result
+```
 
 #### Example
 
@@ -625,9 +655,40 @@ async function fetchData() {
 - `method` — HTTP-метод
 - `dependsOn` — массив ключей шагов, от которых зависит этот шаг
 - `condition(prev, allResults, sharedData)` — функция-условие для выполнения шага
-- `request(prev, allResults)` — кастомная функция запроса (альтернатива command)
+- `before(prev, allResults, sharedData)` — before-хук (вызывается перед запросом; может изменить входные данные)
+- `request(prev, allResults, sharedData)` — кастомная функция запроса (альтернатива command). Если before возвращает значение, оно будет передано в request вместо prev.
+- `after(result, allResults, sharedData)` — post-processing хук (вызывается после запроса, до перехода к следующему этапу; может модифицировать результат)
 - `retryCount`, `timeoutMs` — индивидуальные настройки повтора и таймаута
 - `errorHandler(error, key, sharedData)` — обработчик ошибок шага
+
+##### Диаграмма выполнения шага
+
+```
+┌───────────────┐
+│  before       │
+│ (опционально) │
+└─────┬─────────┘
+      │
+      ▼
+┌────────────┐
+│  request   │
+└─────┬──────┘
+      │
+      ▼
+┌───────────────┐
+│  after        │
+│ (опционально) │
+└─────┬─────────┘
+      │
+      ▼
+┌────────────┐
+│ следующий  │
+│   шаг      │
+└────────────┘
+
+Если возникает ошибка на любом этапе:
+  └─► errorHandler (если определён) → результат с ошибкой
+```
 
 #### Пример
 
