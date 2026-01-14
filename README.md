@@ -1,3 +1,400 @@
+## rest-pipeline-js
+
+**Flexible, modular pipeline orchestrator for REST APIs.**
+
+---
+
+## Installation
+
+```sh
+npm i rest-pipeline-js
+```
+
+## Features & API
+
+### Core module (rest-pipeline-js)
+
+#### Example: Create REST client and make a request
+
+```js
+import { createRestClient } from "rest-pipeline-js";
+
+const client = createRestClient({
+  baseURL: "https://api.example.com",
+  timeout: 5000,
+  headers: { Authorization: "Bearer TOKEN" },
+});
+
+async function fetchUser(id) {
+  const res = await client.request(`/users/${id}`);
+  if (res.error) {
+    console.error(res.error);
+  } else {
+    console.log(res.data);
+  }
+}
+```
+
+#### Example: Run a pipeline, handle errors, track progress, use shared data
+
+```js
+import { PipelineOrchestrator } from "rest-pipeline-js";
+
+const pipelineConfig = {
+  stages: [
+    { key: "step1", command: "/api/step1", method: "POST" },
+    {
+      key: "step2",
+      command: "/api/step2",
+      method: "POST",
+      dependsOn: ["step1"],
+    },
+  ],
+};
+const httpConfig = {
+  baseURL: "https://api.example.com",
+  timeout: 7000,
+  headers: { Authorization: "Bearer TOKEN" },
+  retry: { attempts: 2, delayMs: 1000 },
+  cache: { enabled: true, ttlMs: 60000 },
+  rateLimit: { maxConcurrent: 2 },
+  metrics: {
+    onRequestStart: (info) => console.log("Start:", info),
+    onRequestEnd: (info) => console.log("End:", info),
+  },
+};
+const sharedData = { sessionId: "abc123" };
+const orchestrator = new PipelineOrchestrator(
+  pipelineConfig,
+  httpConfig,
+  sharedData,
+  { autoReset: true }
+);
+
+orchestrator.subscribeProgress((progress) => {
+  console.log(
+    "Current stage:",
+    progress.currentStage,
+    "Statuses:",
+    progress.stageStatuses
+  );
+});
+orchestrator.on("step:step1:success", (payload) => {
+  console.log("Step 1 success:", payload.data);
+});
+orchestrator.on("step:step2:error", (payload) => {
+  console.error("Step 2 error:", payload.error);
+});
+orchestrator.on("log", () => {
+  console.log("Logs:", orchestrator.getLogs());
+});
+orchestrator
+  .run({ foo: "bar" })
+  .then((result) => {
+    console.log("Pipeline finished:", result);
+    console.log("Stage results:", result.stageResults);
+  })
+  .catch((err) => {
+    console.error("Pipeline error:", err);
+  });
+// orchestrator.rerunStep('step2');
+```
+
+---
+
+The module provides a universal mechanism for building and managing REST API pipelines with progress tracking, error handling, event subscriptions, and extensibility.
+
+### Main classes and functions
+
+#### createRestClient(config: HttpConfig): RestClient
+
+Creates a REST client with advanced HTTP API features.
+
+#### Example
+
+```js
+import { createRestClient } from "rest-pipeline-js";
+const client = createRestClient({
+  baseURL: "https://api.example.com",
+  timeout: 5000,
+  headers: { Authorization: "Bearer TOKEN" },
+  retry: { attempts: 2 },
+  cache: { enabled: true, ttlMs: 60000 },
+});
+async function getUser(id) {
+  const res = await client.request(`/users/${id}`);
+  if (res.error) {
+    console.error("Error:", res.error);
+  } else {
+    console.log("User:", res.data);
+  }
+}
+```
+
+---
+
+#### RequestExecutor
+
+Wrapper for REST requests with retry and timeout support.
+
+#### Example
+
+```js
+import { RequestExecutor } from "rest-pipeline-js";
+const executor = new RequestExecutor({ baseURL: "https://api.example.com" });
+async function fetchData() {
+  try {
+    const res = await executor.execute("/data", { method: "GET" }, 3, 3000);
+    if (res.error) {
+      console.error("Error:", res.error);
+    } else {
+      console.log("Data:", res.data);
+    }
+  } catch (err) {
+    console.error("Critical error:", err);
+  }
+}
+```
+
+---
+
+#### PipelineOrchestrator
+
+Main class for building and managing a pipeline of sequential stages.
+
+##### Key methods and parameters
+
+- **constructor(pipelineConfig, httpConfig, sharedData?, options?)**
+  - `pipelineConfig` — array of stages, their params, conditions, handlers
+  - `httpConfig` — HTTP client config
+  - `sharedData` — shared data pool between stages
+  - `options.autoReset` — whether to reset state after finish
+- **run(onStepPause?, externalSignal?)** — run the pipeline
+  - `onStepPause(stepIndex, stepResult, stageResults)` — callback for pause/confirmation/modification between stages
+  - `externalSignal` — external AbortSignal
+  - Returns: `{ stageResults, success }`
+- **rerunStep(stepKey, options?)** — rerun a single stage
+- **subscribeProgress(listener)** — subscribe to progress updates
+- **subscribeStageResults(listener)** — subscribe to stage results
+- **subscribeStepProgress(stepKey, listener)** — subscribe to a specific stage's progress
+- **on(eventName, handler)** — universal event subscription
+- **onStepStart/Finish/Error(handler)** — subscribe to stage events
+- **getProgress()** — get current progress snapshot
+- **getProgressRef()** — get progress object (for reactivity)
+- **getLogs()** — get pipeline logs
+- **abort()** — abort pipeline
+- **isAborted()** — check if pipeline was aborted
+
+##### Stage parameters
+
+- `key` — unique stage key
+- `command` — endpoint/command for request
+- `method` — HTTP method
+- `dependsOn` — array of stage keys this depends on
+- `condition(prev, allResults, sharedData)` — condition function
+- `request(prev, allResults)` — custom request function
+- `retryCount`, `timeoutMs` — per-stage retry/timeout
+- `errorHandler(error, key, sharedData)` — custom error handler
+
+#### Example
+
+```js
+import { PipelineOrchestrator } from "rest-pipeline-js";
+const pipelineConfig = {
+  stages: [
+    { key: "first", command: "/api/first", method: "POST" },
+    {
+      key: "second",
+      command: "/api/second",
+      method: "POST",
+      dependsOn: ["first"],
+    },
+  ],
+};
+const httpConfig = { baseURL: "https://api.example.com" };
+const sharedData = { sessionId: "abc" };
+const orchestrator = new PipelineOrchestrator(
+  pipelineConfig,
+  httpConfig,
+  sharedData
+);
+orchestrator.subscribeProgress((progress) => {
+  console.log("Progress:", progress);
+});
+orchestrator.on("step:first:success", (payload) => {
+  console.log("First stage done:", payload.data);
+});
+orchestrator
+  .run(async (i, result) => {
+    await new Promise((r) => setTimeout(r, 1000));
+    return result;
+  })
+  .then((result) => console.log("Pipeline finished:", result))
+  .catch((err) => console.error("Pipeline error:", err));
+```
+
+---
+
+#### ProgressTracker
+
+Internal class for tracking pipeline progress.
+
+#### Example
+
+```js
+import { ProgressTracker } from "rest-pipeline-js";
+const tracker = new ProgressTracker(3);
+tracker.subscribe((progress) => {
+  console.log("Current progress:", progress);
+});
+tracker.updateStage(1, "success");
+console.log(tracker.getProgress());
+```
+
+---
+
+#### ErrorHandler
+
+Class for handling pipeline stage errors.
+
+#### Example
+
+```js
+import { ErrorHandler } from "rest-pipeline-js";
+const handler = new ErrorHandler();
+const error = handler.handle(new Error("fail"), "step1");
+console.log(error); // { type: 'unknown', error: [Error], stageKey: 'step1' }
+```
+
+#### Types and interfaces
+
+- **HttpConfig** — REST client config (baseURL, timeout, headers, retry, cache, rateLimit, metrics)
+- **ApiError** — API error description
+- **ApiResponse<T>** — API response (data, error, status)
+- **PipelineConfig, PipelineResult, PipelineStepEvent, PipelineStepStatus** — pipeline and stage types
+
+---
+
+### Vue integration
+
+#### Example: use in Vue component
+
+```js
+<script setup>
+import { ref } from 'vue';
+import { PipelineOrchestrator } from 'rest-pipeline-js';
+import { usePipelineProgress, usePipelineRun } from 'rest-pipeline-js/vue';
+const pipelineConfig = { stages: [/* ... */] };
+const httpConfig = { baseURL: 'https://api.example.com' };
+const orchestrator = new PipelineOrchestrator(pipelineConfig, httpConfig);
+const progress = usePipelineProgress(orchestrator);
+const { run, running, result, error } = usePipelineRun(orchestrator);
+</script>
+<template>
+  <div>
+    <div>Current stage: {{ progress.value.currentStage }}</div>
+    <button @click="run()" :disabled="running">Start</button>
+    <div v-if="result">Done: {{ result }}</div>
+    <div v-if="error">Error: {{ error.message }}</div>
+  </div>
+</template>
+```
+
+---
+
+Composition functions for Vue 3:
+
+- **usePipelineProgress(orchestrator)** — reactive pipeline progress (Ref<PipelineProgress>)
+- **usePipelineRun(orchestrator)** — run pipeline and get reactive status (run, running, result, error)
+- **usePipelineStepEvent(orchestrator, stepKey, eventType)** — subscribe to stage events (success, error, progress)
+- **usePipelineLogs(orchestrator)** — reactive pipeline logs
+- **useRerunPipelineStep(orchestrator)** — rerun a stage
+- **useRestClient(config)** — reactive REST client (computed)
+
+---
+
+### React integration
+
+#### Example: use in React component
+
+```jsx
+import React from "react";
+import { PipelineOrchestrator } from "rest-pipeline-js";
+import { usePipelineProgress, usePipelineRun } from "rest-pipeline-js/react";
+const pipelineConfig = {
+  stages: [
+    /* ... */
+  ],
+};
+const httpConfig = { baseURL: "https://api.example.com" };
+const orchestrator = new PipelineOrchestrator(pipelineConfig, httpConfig);
+export function PipelineComponent() {
+  const progress = usePipelineProgress(orchestrator);
+  const [run, { running, result, error }] = usePipelineRun(orchestrator);
+  return (
+    <div>
+      <div>Current stage: {progress.currentStage}</div>
+      <button onClick={() => run()} disabled={running}>
+        Start
+      </button>
+      {result && <div>Done: {JSON.stringify(result)}</div>}
+      {error && <div>Error: {error.message}</div>}
+    </div>
+  );
+}
+```
+
+---
+
+Hooks for React:
+
+- **usePipelineProgress(orchestrator)** — subscribe to pipeline progress (PipelineProgress)
+- **usePipelineRun(orchestrator)** — run pipeline and get status ([run, { running, result, error }])
+- **usePipelineStepEvent(orchestrator, stepKey, eventType)** — subscribe to stage events (success/error/progress)
+- **usePipelineLogs(orchestrator)** — subscribe to pipeline logs
+- **useRerunPipelineStep(orchestrator)** — rerun a stage
+- **useRestClient(config)** — memoized REST client
+
+---
+
+## Requirements
+
+- Node.js >= 14.0.0
+- Modern browser with ES2020 support
+
+---
+
+## Development & Contribution
+
+```bash
+# Clone repository
+git clone https://github.com/macrulezru/pipeline-js.git
+cd pipeline-js
+npm install
+npm test
+npm run lint
+```
+
+---
+
+## License
+
+MIT
+
+---
+
+## Author
+
+Danil Lisin Vladimirovich aka Macrulez
+GitHub: [macrulezru](https://github.com/macrulezru)
+Website: [macrulez.ru](https://macrulez.ru/)
+
+---
+
+## Support
+
+Questions and bugs — via [issue](https://github.com/macrulezru/pipeline-js/issues)
+
 ## Установка
 
 ```sh
