@@ -1,41 +1,17 @@
 {
   "name": "rest-pipeline-js",
-  "version": "1.0.9",
+  "version": "1.1.0",
   "description": "Pipeline Orchestration Utilities for JavaScript REST API Clients",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "exports": {
-    ".": {
-      "import": "./dist/index.js",
-      "require": "./dist/index.js",
-      "types": "./dist/index.d.ts"
-    },
-    "./vue": {
-      "import": "./vue/distr/vue/index.js",
-      "require": "./vue/distr/vue/index.js",
-      "types": "./vue/distr/vue/index.d.ts"
-    },
-    "./vue/*": {
-      "import": "./vue/distr/vue/*.js",
-      "require": "./vue/distr/vue/*.js",
-      "types": "./vue/distr/vue/*.d.ts"
-    },
-    "./react": {
-      "import": "./react/distr/react/index.js",
-      "require": "./react/distr/react/index.js",
-      "types": "./react/distr/react/index.d.ts"
-    },
-    "./react/*": {
-      "import": "./react/distr/react/*.js",
-      "require": "./react/distr/react/*.js",
-      "types": "./react/distr/react/*.d.ts"
-    }
-  },
   "scripts": {
-    "build": "npm run build:vue && npm run build:react && tsc",
-    "build:vue": "tsc --project vue/tsconfig.json --outDir vue/distr",
-    "build:react": "tsc --project react/tsconfig.json --outDir react/distr",
-    "test": "echo \"No tests specified\" && exit 0"
+    "build": "npm run build:all",
+    "build:all": "tsc --build",
+    "build:vue": "tsc --project src/vue/tsconfig.json --outDir dist/vue",
+    "build:react": "tsc --project src/react/tsconfig.json --outDir dist/react",
+    "test": "echo \"No tests specified\" && exit 0",
+    "demo:vue": "npm run start-demo-vite",
+    "start-demo-vite": "vite --config vite.config.js"
   },
   "repository": {
     "type": "git",
@@ -55,9 +31,18 @@
   "homepage": "https://macrulez.ru/#/en",
   "devDependencies": {
     "@types/react": "^19.2.8",
+    "@typescript-eslint/eslint-plugin": "^8.53.0",
+    "@typescript-eslint/parser": "^8.53.0",
+    "@vitejs/plugin-vue": "^6.0.3",
+    "eslint": "^9.39.2",
+    "eslint-plugin-vue": "^10.6.2",
     "react": "^19.2.3",
+    "react-dom": "^19.2.3",
+    "scheduler": "^0.27.0",
     "typescript": "^5.9.3",
-    "vue": "^3.5.26"
+    "vite": "^7.3.1",
+    "vue": "^3.5.26",
+    "vue-eslint-parser": "^10.2.0"
   },
   "dependencies": {
     "axios": "^1.13.2"

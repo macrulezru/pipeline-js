@@ -1,5 +1,4 @@
-
-import type { PipelineProgress } from './types';
+import type { PipelineProgress } from "./types";
 
 type ProgressListener = (progress: PipelineProgress) => void;
 
@@ -11,8 +10,16 @@ export class ProgressTracker {
     this.progress = {
       currentStage: 0,
       totalStages,
-      stageStatuses: Array(totalStages).fill('pending'),
+      stageStatuses: Array(totalStages).fill("pending"),
     };
+  }
+
+  reset(): void {
+    this.progress.currentStage = 0;
+    this.progress.stageStatuses = Array(this.progress.totalStages).fill(
+      "pending"
+    );
+    this.notify();
   }
 
   /**
@@ -23,7 +30,10 @@ export class ProgressTracker {
     return this.progress;
   }
 
-  updateStage(stage: number, status: PipelineProgress['stageStatuses'][number]) {
+  updateStage(
+    stage: number,
+    status: PipelineProgress["stageStatuses"][number]
+  ) {
     this.progress.stageStatuses[stage] = status;
     this.progress.currentStage = stage;
     this.notify();
@@ -38,7 +48,7 @@ export class ProgressTracker {
     // Немедленно уведомляем нового подписчика о текущем состоянии
     listener({ ...this.progress });
     return () => {
-      this.listeners = this.listeners.filter(l => l !== listener);
+      this.listeners = this.listeners.filter((l) => l !== listener);
     };
   }
 

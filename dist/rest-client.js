@@ -1,21 +1,13 @@
-"use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.toApiError = toApiError;
-exports.createRestClient = createRestClient;
-exports.getRestClient = getRestClient;
-const axios_1 = __importDefault(require("axios"));
-function toApiError(error) {
+import axios from 'axios';
+export function toApiError(error) {
     var _a;
-    if (axios_1.default.isCancel(error)) {
+    if (axios.isCancel(error)) {
         return {
             message: 'Запрос был отменен',
             code: 'REQUEST_CANCELLED',
         };
     }
-    if (axios_1.default.isAxiosError(error)) {
+    if (axios.isAxiosError(error)) {
         const axiosError = error;
         return {
             message: axiosError.message,
@@ -36,8 +28,8 @@ function toApiError(error) {
     };
 }
 const restClientCache = new Map();
-function createRestClient(config) {
-    const httpClient = axios_1.default.create({
+export function createRestClient(config) {
+    const httpClient = axios.create({
         baseURL: config.baseURL,
         timeout: config.timeout,
         headers: config.headers,
@@ -149,7 +141,7 @@ function createRestClient(config) {
         cancelRequest,
     };
 }
-function getRestClient(config) {
+export function getRestClient(config) {
     var _a, _b;
     const key = JSON.stringify({
         baseURL: config.baseURL,

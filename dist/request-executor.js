@@ -1,10 +1,7 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.RequestExecutor = void 0;
-const rest_client_1 = require("./rest-client");
-class RequestExecutor {
+import { getRestClient } from './rest-client';
+export class RequestExecutor {
     constructor(httpConfig) {
-        this.client = (0, rest_client_1.getRestClient)(httpConfig);
+        this.client = getRestClient(httpConfig);
     }
     /**
      * Выполнение одного запроса с поддержкой retry и таймаута
@@ -30,4 +27,3 @@ class RequestExecutor {
         throw lastError;
     }
 }
-exports.RequestExecutor = RequestExecutor;

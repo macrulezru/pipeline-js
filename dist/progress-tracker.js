@@ -1,14 +1,16 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.ProgressTracker = void 0;
-class ProgressTracker {
+export class ProgressTracker {
     constructor(totalStages) {
         this.listeners = [];
         this.progress = {
             currentStage: 0,
             totalStages,
-            stageStatuses: Array(totalStages).fill('pending'),
+            stageStatuses: Array(totalStages).fill("pending"),
         };
+    }
+    reset() {
+        this.progress.currentStage = 0;
+        this.progress.stageStatuses = Array(this.progress.totalStages).fill("pending");
+        this.notify();
     }
     /**
      * Возвращает текущий снимок состояния прогресса (не реактивный).
@@ -30,7 +32,7 @@ class ProgressTracker {
         // Немедленно уведомляем нового подписчика о текущем состоянии
         listener({ ...this.progress });
         return () => {
-            this.listeners = this.listeners.filter(l => l !== listener);
+            this.listeners = this.listeners.filter((l) => l !== listener);
         };
     }
     notify() {
@@ -39,4 +41,3 @@ class ProgressTracker {
         }
     }
 }
-exports.ProgressTracker = ProgressTracker;
