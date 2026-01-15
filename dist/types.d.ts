@@ -108,6 +108,8 @@ export type PipelineStepResult = {
     data?: any;
     /** Ошибка (если error) */
     error?: import("./types").ApiError;
+    /** URL команды шага (если применимо) */
+    url?: string;
 };
 /**
  * Конфиг всего pipeline (массив этапов)
