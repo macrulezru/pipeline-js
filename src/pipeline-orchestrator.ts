@@ -470,7 +470,29 @@ export class PipelineOrchestrator {
       }
       const stage = this.config.stages[i];
       const key = stage?.key || `stage${i}`;
-      this.stageResults[key] = { status: "pending" };
+      // Получаем url команды для шага
+      let stepUrl: string | undefined = undefined;
+      if (typeof stage.request === "string") {
+        stepUrl = stage.request;
+      } else if (typeof stage.request === "function") {
+        try {
+          const reqResult = await stage.request(
+            i > 0
+              ? this.stageResults[this.config.stages[i - 1].key]?.data
+              : undefined,
+            this.stageResults,
+            this.sharedData
+          );
+          if (typeof reqResult === "string") {
+            stepUrl = reqResult;
+          }
+        } catch {
+          // ignore errors here, url не обязателен
+        }
+      } else {
+        stepUrl = key;
+      }
+      this.stageResults[key] = { status: "pending", url: stepUrl };
       this.notifyStageResults();
       this.progress.updateStage(i, "loading");
 
@@ -487,7 +509,10 @@ export class PipelineOrchestrator {
 
       if (!stage) {
         this.progress.updateStage(i, "skipped");
-        this.stageResults[key] = { status: "skipped" };
+        this.stageResults[key] = {
+          status: "skipped",
+          url: this.stageResults[key]?.url,
+        };
         this.notifyStageResults();
         await this.emit(`step:${key}:progress`, "skipped");
         continue;
@@ -505,7 +530,10 @@ export class PipelineOrchestrator {
         )
       ) {
         this.progress.updateStage(i, "skipped");
-        this.stageResults[key] = { status: "skipped" };
+        this.stageResults[key] = {
+          status: "skipped",
+          url: this.stageResults[key]?.url,
+        };
         this.notifyStageResults();
         await this.emit(`step:${key}:progress`, "skipped");
         continue;
@@ -572,7 +600,11 @@ export class PipelineOrchestrator {
         if (onStepPause) {
           stepResult = await onStepPause(i, stepResult, this.stageResults);
         }
-        this.stageResults[key] = { status: "success", data: stepResult };
+        this.stageResults[key] = {
+          status: "success",
+          data: stepResult,
+          url: this.stageResults[key]?.url,
+        };
         this.notifyStageResults();
         this.progress.updateStage(i, "success");
         await this.emit(`step:${key}:progress`, "success");
@@ -599,7 +631,11 @@ export class PipelineOrchestrator {
         }
         // Унификация: всегда ApiError
         const apiError = toApiError(handled ?? err);
-        this.stageResults[key] = { status: "error", error: apiError };
+        this.stageResults[key] = {
+          status: "error",
+          error: apiError,
+          url: this.stageResults[key]?.url,
+        };
         this.notifyStageResults();
         this.progress.updateStage(i, "error");
         await this.emit(`step:${key}:progress`, "error");
