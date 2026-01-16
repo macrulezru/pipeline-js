@@ -13,10 +13,19 @@ const pipelineConfig = {
   stages: [
     {
       key: "points",
+      pauseAfter: 1000,
     },
     {
       key: "availability",
-      request: async (prev: any, _allResults: any, sharedData: any) => {
+      request: async ({
+        prev,
+        allResults,
+        sharedData,
+      }: {
+        prev: any;
+        allResults: any;
+        sharedData: any;
+      }) => {
         const points = prev.points;
         if (!Array.isArray(points) || points.length === 0)
           throw new Error("No points");
@@ -34,7 +43,15 @@ const pipelineConfig = {
     },
     {
       key: "services",
-      request: async (prev: any, _allResults: any, sharedData: any) => {
+      request: async ({
+        prev,
+        allResults,
+        sharedData,
+      }: {
+        prev: any;
+        allResults: any;
+        sharedData: any;
+      }) => {
         sharedData.apiDate = prev["api-date"];
         const direction = prev.directions.find(
           (item: any) => item.date === sharedData.apiDate
@@ -57,9 +74,18 @@ const pipelineConfig = {
     },
     {
       key: "seatmap",
-      request: async (_prev: any, _allResults: any, sharedData: any) => {
+      request: async ({
+        prev,
+        allResults,
+        sharedData,
+      }: {
+        prev: any;
+        allResults: any;
+        sharedData: any;
+      }) => {
         return `seatmap/${sharedData.apiDate}/${sharedData.flightNumber}`;
       },
+      pauseBefore: 500,
     },
   ],
 };
