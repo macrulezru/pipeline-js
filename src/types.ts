@@ -82,48 +82,52 @@ export type PipelineStageConfig<Input = any, Output = any> = {
   /** Уникальный ключ шага */
   key: string;
   /** Асинхронная функция-запрос шага */
-  request?: (
-    input: Input,
-    allResults?: Record<string, PipelineStepResult>,
-    shared?: Record<string, any>
-  ) => Promise<Output>;
+  request?: (params: {
+    prev: Input;
+    allResults: Record<string, PipelineStepResult>;
+    sharedData: Record<string, any>;
+  }) => Promise<Output> | Output;
   /** Условие выполнения шага */
-  condition?: (
-    input: Input,
-    prevResults: Record<string, PipelineStepResult>,
-    sharedData?: Record<string, any>
-  ) => boolean;
+  condition?: (params: {
+    prev: Input;
+    allResults: Record<string, PipelineStepResult>;
+    sharedData: Record<string, any>;
+  }) => boolean;
   /** Количество попыток при ошибке */
   retryCount?: number;
   /** Таймаут шага (мс) */
   timeoutMs?: number;
   /** Обработчик ошибок шага */
-  errorHandler?: (
-    error: any,
-    stageKey: string,
-    sharedData?: Record<string, any>
-  ) => any;
+  errorHandler?: (params: {
+    error: any;
+    key: string;
+    sharedData: Record<string, any>;
+  }) => any;
   /**
    * Хук before: вызывается перед выполнением запроса этапа (request).
    * Может синхронно или асинхронно модифицировать входные данные prev/allResults/sharedData.
    * Возвращаемое значение будет передано в request вместо prev (если возвращено !== undefined).
    */
-  before?: (
-    prev: Input,
-    allResults: Record<string, PipelineStepResult>,
-    shared?: Record<string, any>
-  ) => Promise<Input | void> | Input | void;
+  before?: (params: {
+    prev: Input;
+    allResults: Record<string, PipelineStepResult>;
+    sharedData: Record<string, any>;
+  }) => Promise<Input | void> | Input | void;
 
   /**
    * Хук post-processing: вызывается после получения результата (до перехода к следующему этапу).
    * Может синхронно или асинхронно модифицировать результат шага.
    * Возвращаемое значение будет записано как результат шага (data).
    */
-  after?: (
-    result: Output,
-    allResults: Record<string, PipelineStepResult>,
-    shared?: Record<string, any>
-  ) => Promise<Output> | Output;
+  after?: (params: {
+    result: Output;
+    allResults: Record<string, PipelineStepResult>;
+    sharedData: Record<string, any>;
+  }) => Promise<Output> | Output;
+  /** Пауза (мс) перед выполнением команды */
+  pauseBefore?: number;
+  /** Пауза (мс) после выполнения команды */
+  pauseAfter?: number;
 };
 
 /**

@@ -191,12 +191,14 @@ Main class for building and managing a pipeline of sequential stages.
 - `command` — endpoint/command for request
 - `method` — HTTP method
 - `dependsOn` — array of stage keys this depends on
-- `condition(prev, allResults, sharedData)` — condition function
-- `before(prev, allResults, sharedData)` — pre-processing hook (called before request; can modify input)
-- `request(prev, allResults, sharedData)` — custom request function. If before returns a value, it will be passed to request instead of prev.
-- `after(result, allResults, sharedData)` — post-processing hook (called after request, before next stage; can modify result)
+- `condition({ prev, allResults, sharedData })` — condition function
+- `before({ prev, allResults, sharedData })` — pre-processing hook (called before request; can modify input)
+- `request({ prev, allResults, sharedData })` — custom request function. If before returns a value, it will be passed to request as prev.
+- `after({ result, allResults, sharedData })` — post-processing hook (called after request, before next stage; can modify result)
+- `pauseBefore` — optional pause (in ms) before request execution
+- `pauseAfter` — optional pause (in ms) after request execution
 - `retryCount`, `timeoutMs` — per-stage retry/timeout
-- `errorHandler(error, key, sharedData)` — custom error handler
+- `errorHandler({ error, key, sharedData })` — custom error handler
 
 ##### Step execution flow diagram
 
@@ -654,12 +656,14 @@ async function fetchData() {
 - `command` — команда/endpoint для запроса
 - `method` — HTTP-метод
 - `dependsOn` — массив ключей шагов, от которых зависит этот шаг
-- `condition(prev, allResults, sharedData)` — функция-условие для выполнения шага
-- `before(prev, allResults, sharedData)` — before-хук (вызывается перед запросом; может изменить входные данные)
-- `request(prev, allResults, sharedData)` — кастомная функция запроса (альтернатива command). Если before возвращает значение, оно будет передано в request вместо prev.
-- `after(result, allResults, sharedData)` — post-processing хук (вызывается после запроса, до перехода к следующему этапу; может модифицировать результат)
+- `condition({ prev, allResults, sharedData })` — функция-условие для выполнения шага
+- `before({ prev, allResults, sharedData })` — before-хук (вызывается перед запросом; может изменить входные данные)
+- `request({ prev, allResults, sharedData })` — кастомная функция запроса (альтернатива command). Если before возвращает значение, оно будет передано в request как prev.
+- `after({ result, allResults, sharedData })` — post-processing хук (вызывается после запроса, до перехода к следующему этапу; может модифицировать результат)
+- `pauseBefore` — опциональная пауза (в миллисекундах) перед выполнением запроса
+- `pauseAfter` — опциональная пауза (в миллисекундах) после выполнения запроса
 - `retryCount`, `timeoutMs` — индивидуальные настройки повтора и таймаута
-- `errorHandler(error, key, sharedData)` — обработчик ошибок шага
+- `errorHandler({ error, key, sharedData })` — обработчик ошибок шага
 
 ##### Диаграмма выполнения шага
 
