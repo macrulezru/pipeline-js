@@ -421,7 +421,9 @@ MIT
 ## Author
 
 Danil Lisin Vladimirovich aka Macrulez
+
 GitHub: [macrulezru](https://github.com/macrulezru)
+
 Website: [macrulez.ru](https://macrulez.ru/)
 
 ---
@@ -902,6 +904,7 @@ MIT
 Данил Лисин Владимирович aka Macrulez
 
 GitHub: [macrulezru](https://github.com/macrulezru)
+
 Сайт: [macrulez.ru](https://macrulez.ru/)
 
 ---
