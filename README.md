@@ -68,7 +68,7 @@ const orchestrator = new PipelineOrchestrator(
   pipelineConfig,
   httpConfig,
   sharedData,
-  { autoReset: true }
+  { autoReset: true },
 );
 
 orchestrator.subscribeProgress((progress) => {
@@ -76,7 +76,7 @@ orchestrator.subscribeProgress((progress) => {
     "Current stage:",
     progress.currentStage,
     "Statuses:",
-    progress.stageStatuses
+    progress.stageStatuses,
   );
 });
 orchestrator.on("step:step1:success", (payload) => {
@@ -248,7 +248,7 @@ const sharedData = { sessionId: "abc" };
 const orchestrator = new PipelineOrchestrator(
   pipelineConfig,
   httpConfig,
-  sharedData
+  sharedData,
 );
 orchestrator.subscribeProgress((progress) => {
   console.log("Progress:", progress);
@@ -399,6 +399,40 @@ Hooks for React (import from 'rest-pipeline-js'):
 
 ---
 
+## Notes for bundlers (Vue / React projects)
+
+- The package provides framework-specific composition helpers for both Vue and React. To avoid forcing React into a Vue build, the package exposes framework helpers via explicit subpath exports. The package root (`rest-pipeline-js`) includes only core utilities and Vue helpers; React helpers are available via their subpath exports as well.
+
+- Recommended imports:
+  - Core utilities (framework-agnostic):
+
+    ```js
+    import { createRestClient, PipelineOrchestrator } from "rest-pipeline-js";
+    ```
+
+  - Vue composition helpers (preferred in Vue projects):
+
+    ```js
+    import {
+      usePipelineProgressVue,
+      usePipelineRunVue,
+    } from "rest-pipeline-js/usePipelineProgress-vue";
+    // or
+    import { useRestClientVue } from "rest-pipeline-js/useRestClient-vue";
+    ```
+
+  - React hooks (preferred in React projects):
+
+    ```js
+    import { usePipelineProgressReact } from "rest-pipeline-js/usePipelineProgress-react";
+    ```
+
+- If you previously imported UI hooks from the package root (for example `import { useRestClient } from 'rest-pipeline-js'`), update your imports to use the subpath helpers above. This prevents bundlers from resolving `react` in projects that don't use React.
+
+- The package sets `sideEffects: false` and declares `react`/`react-dom` as `peerDependencies`. React remains available for development via `devDependencies`, but consumers must install React themselves when using React helpers.
+
+If you want, I can prepare a release (bump version and build) with these changes.
+
 ## Development & Contribution
 
 ```bash
@@ -505,7 +539,7 @@ const orchestrator = new PipelineOrchestrator(
   pipelineConfig,
   httpConfig,
   sharedData,
-  { autoReset: true }
+  { autoReset: true },
 );
 
 // Отслеживание прогресса
@@ -514,7 +548,7 @@ orchestrator.subscribeProgress((progress) => {
     "Текущий шаг:",
     progress.currentStage,
     "Статусы:",
-    progress.stageStatuses
+    progress.stageStatuses,
   );
 });
 
@@ -621,20 +655,17 @@ async function fetchData() {
 #### Основные методы и параметры
 
 - **constructor(pipelineConfig, httpConfig, sharedData?, options?)** — создание экземпляра:
-
   - `pipelineConfig` — массив шагов (stages), их параметры, условия, обработчики
   - `httpConfig` — настройки HTTP клиента
   - `sharedData` — общий пул данных между шагами
   - `options.autoReset` — сбрасывать ли состояние после завершения
 
 - **run(onStepPause?, externalSignal?)** — запуск конвейера
-
   - `onStepPause(stepIndex, stepResult, stageResults)` — callback для паузы/подтверждения/модификации результата между шагами (можно реализовать задержку, диалог, логику)
   - `externalSignal` — внешний AbortSignal для отмены
   - Возвращает: `{ stageResults, success }`
 
 - **rerunStep(stepKey, options?)** — повторно выполнить один шаг
-
   - `onStepPause` и `externalSignal` аналогично run
   - Возвращает результат шага
 
@@ -717,7 +748,7 @@ const sharedData = { sessionId: "abc" };
 const orchestrator = new PipelineOrchestrator(
   pipelineConfig,
   httpConfig,
-  sharedData
+  sharedData,
 );
 
 orchestrator.subscribeProgress((progress) => {
@@ -870,6 +901,40 @@ export function PipelineComponent() {
 - **usePipelineLogsReact(orchestrator)** — подписка на логи pipeline
 - **useRerunPipelineStepReact(orchestrator)** — функция для повторного запуска шага
 - **useRestClientReact(config)** — мемоизированный REST клиент
+
+---
+
+## Замечания для сборщиков (Vue / React) — русский
+
+- Пакет предоставляет хелперы для Vue и React отдельно. Чтобы избежать подтягивания `react` в проекты на Vue, используйте явные subpath-импорты для фреймворк‑специфичных модулей.
+
+- Рекомендуемые импорты:
+  - Ядро (без привязки к фреймворку):
+
+    ```js
+    import { createRestClient, PipelineOrchestrator } from "rest-pipeline-js";
+    ```
+
+  - Vue (предпочтительно в проектах на Vue):
+
+    ```js
+    import {
+      usePipelineProgressVue,
+      usePipelineRunVue,
+    } from "rest-pipeline-js/usePipelineProgress-vue";
+    // или
+    import { useRestClientVue } from "rest-pipeline-js/useRestClient-vue";
+    ```
+
+  - React (предпочтительно в проектах на React):
+
+    ```js
+    import { usePipelineProgressReact } from "rest-pipeline-js/usePipelineProgress-react";
+    ```
+
+- Если вы ранее импортировали UI-хелперы из корня пакета, обновите импорты на subpath-версии — это предотвратит попытки резолва `react` в проектах без React.
+
+- Пакет помечен как `sideEffects: false` и объявляет `react`/`react-dom` в `peerDependencies`. При использовании React-хелперов потребитель должен установить `react` и `react-dom`.
 
 ---
 
