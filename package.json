@@ -1,6 +1,6 @@
 {
   "name": "rest-pipeline-js",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Pipeline Orchestration Utilities for JavaScript REST API Clients",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -9,8 +9,49 @@
       "import": "./dist/index.js",
       "require": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./useRestClient-vue": {
+      "import": "./dist/useRestClient-vue.js",
+      "require": "./dist/useRestClient-vue.js",
+      "types": "./dist/useRestClient-vue.d.ts"
+    },
+    "./useRestClient-react": {
+      "import": "./dist/useRestClient-react.js",
+      "require": "./dist/useRestClient-react.js",
+      "types": "./dist/useRestClient-react.d.ts"
+    },
+    "./usePipelineProgress-vue": {
+      "import": "./dist/usePipelineProgress-vue.js",
+      "require": "./dist/usePipelineProgress-vue.js",
+      "types": "./dist/usePipelineProgress-vue.d.ts"
+    },
+    "./usePipelineProgress-react": {
+      "import": "./dist/usePipelineProgress-react.js",
+      "require": "./dist/usePipelineProgress-react.js",
+      "types": "./dist/usePipelineProgress-react.d.ts"
+    },
+    "./usePipelineRun-vue": {
+      "import": "./dist/usePipelineRun-vue.js",
+      "require": "./dist/usePipelineRun-vue.js",
+      "types": "./dist/usePipelineRun-vue.d.ts"
+    },
+    "./usePipelineRun-react": {
+      "import": "./dist/usePipelineRun-react.js",
+      "require": "./dist/usePipelineRun-react.js",
+      "types": "./dist/usePipelineRun-react.d.ts"
+    },
+    "./usePipelineStepEvents-vue": {
+      "import": "./dist/usePipelineStepEvents-vue.js",
+      "require": "./dist/usePipelineStepEvents-vue.js",
+      "types": "./dist/usePipelineStepEvents-vue.d.ts"
+    },
+    "./usePipelineStepEvents-react": {
+      "import": "./dist/usePipelineStepEvents-react.js",
+      "require": "./dist/usePipelineStepEvents-react.js",
+      "types": "./dist/usePipelineStepEvents-react.d.ts"
     }
   },
+  "sideEffects": false,
   "scripts": {
     "build": "npm run build:all",
     "build:all": "tsc --build",
@@ -53,6 +94,10 @@
     "vitest": "^4.0.17",
     "vue": "^3.5.26",
     "vue-eslint-parser": "^10.2.0"
+  },
+  "peerDependencies": {
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3"
   },
   "dependencies": {
     "axios": "^1.13.2"
