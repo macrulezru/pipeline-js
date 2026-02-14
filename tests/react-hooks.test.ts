@@ -6,7 +6,7 @@ import {
   usePipelineLogsReact,
   useRerunPipelineStepReact,
   useRestClientReact,
-} from "rest-pipeline-js";
+} from "rest-pipeline-js/react";
 import { renderHook, act } from "@testing-library/react";
 
 describe("React hooks", () => {

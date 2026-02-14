@@ -6,7 +6,7 @@ import {
   PipelineOrchestrator,
   usePipelineRunVue,
   usePipelineProgressVue,
-} from "rest-pipeline-js";
+} from "rest-pipeline-js/vue";
 import { computed } from "vue";
 
 const pipelineConfig = {

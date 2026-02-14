@@ -314,8 +314,7 @@ console.log(error); // { type: 'unknown', error: [Error], stageKey: 'step1' }
 ```js
 <script setup>
 import { ref } from 'vue';
-import { PipelineOrchestrator } from 'rest-pipeline-js';
-import { usePipelineProgressVue, usePipelineRunVue } from 'rest-pipeline-js';
+import { PipelineOrchestrator, usePipelineProgressVue, usePipelineRunVue } from 'rest-pipeline-js/vue';
 const pipelineConfig = { stages: [/* ... */] };
 const httpConfig = { baseURL: 'https://api.example.com' };
 const orchestrator = new PipelineOrchestrator(pipelineConfig, httpConfig);
@@ -334,7 +333,7 @@ const { run, running, result, error } = usePipelineRunVue(orchestrator);
 
 ---
 
-Composition functions for Vue 3 (import from 'rest-pipeline-js'):
+Composition functions for Vue 3 (import from `rest-pipeline-js/vue`):
 
 - **usePipelineProgressVue(orchestrator)** — reactive pipeline progress (Ref<PipelineProgress>)
 - **usePipelineRunVue(orchestrator)** — run pipeline and get reactive status (run, running, result, error)
@@ -351,11 +350,11 @@ Composition functions for Vue 3 (import from 'rest-pipeline-js'):
 
 ```jsx
 import React from "react";
-import { PipelineOrchestrator } from "rest-pipeline-js";
 import {
+  PipelineOrchestrator,
   usePipelineProgressReact,
   usePipelineRunReact,
-} from "rest-pipeline-js";
+} from "rest-pipeline-js/react";
 const pipelineConfig = {
   stages: [
     /* ... */
@@ -381,7 +380,7 @@ export function PipelineComponent() {
 
 ---
 
-Hooks for React (import from 'rest-pipeline-js'):
+Hooks for React (import from `rest-pipeline-js/react`):
 
 - **usePipelineProgressReact(orchestrator)** — subscribe to pipeline progress (PipelineProgress)
 - **usePipelineRunReact(orchestrator)** — run pipeline and get status ([run, { running, result, error }])
@@ -399,37 +398,37 @@ Hooks for React (import from 'rest-pipeline-js'):
 
 ---
 
-## Notes for bundlers (Vue / React projects)
+## Entry points and imports
 
-- The package provides framework-specific composition helpers for both Vue and React. To avoid forcing React into a Vue build, the package exposes framework helpers via explicit subpath exports. The package root (`rest-pipeline-js`) includes only core utilities and Vue helpers; React helpers are available via their subpath exports as well.
+The package has three entry points so that bundlers do not pull in React when you only use core or Vue.
 
-- Recommended imports:
-  - Core utilities (framework-agnostic):
+| Entry point | Use for | Contents |
+|-------------|---------|----------|
+| `rest-pipeline-js` | Core only | `PipelineOrchestrator`, `createRestClient`, types, `rest-client`, `request-executor`, `error-handler`, `progress-tracker`. No Vue/React. |
+| `rest-pipeline-js/vue` | Vue projects | Everything from core + Vue hooks: `usePipelineProgressVue`, `usePipelineRunVue`, `useRestClientVue`, `usePipelineStepEventVue`, `usePipelineLogsVue`, `useRerunPipelineStepVue`. |
+| `rest-pipeline-js/react` | React projects | Everything from core + React hooks: `usePipelineProgressReact`, `usePipelineRunReact`, `useRestClientReact`, `usePipelineStepEventReact`, `usePipelineLogsReact`, `useRerunPipelineStepReact`. |
 
-    ```js
-    import { createRestClient, PipelineOrchestrator } from "rest-pipeline-js";
-    ```
+**Recommended imports:**
 
-  - Vue composition helpers (preferred in Vue projects):
+- **Core only** (no framework):
 
-    ```js
-    import {
-      usePipelineProgressVue,
-      usePipelineRunVue,
-    } from "rest-pipeline-js/usePipelineProgress-vue";
-    // or
-    import { useRestClientVue } from "rest-pipeline-js/useRestClient-vue";
-    ```
+  ```js
+  import { createRestClient, PipelineOrchestrator } from "rest-pipeline-js";
+  ```
 
-  - React hooks (preferred in React projects):
+- **Vue** (core + Vue hooks):
 
-    ```js
-    import { usePipelineProgressReact } from "rest-pipeline-js/usePipelineProgress-react";
-    ```
+  ```js
+  import { PipelineOrchestrator, usePipelineRunVue } from "rest-pipeline-js/vue";
+  ```
 
-- If you previously imported UI hooks from the package root (for example `import { useRestClient } from 'rest-pipeline-js'`), update your imports to use the subpath helpers above. This prevents bundlers from resolving `react` in projects that don't use React.
+- **React** (core + React hooks):
 
-- The package sets `sideEffects: false` and declares `react`/`react-dom` as `peerDependencies`. React remains available for development via `devDependencies`, but consumers must install React themselves when using React helpers.
+  ```js
+  import { PipelineOrchestrator, usePipelineRunReact } from "rest-pipeline-js/react";
+  ```
+
+If you use only `rest-pipeline-js` or `rest-pipeline-js/vue`, the bundler will not resolve or include `react`. The package sets `sideEffects: false` and declares `react`/`react-dom` as `peerDependencies` for the React entry point.
 
 If you want, I can prepare a release (bump version and build) with these changes.
 
@@ -820,8 +819,7 @@ console.log(error); // { type: 'unknown', error: [Error], stageKey: 'step1' }
 ```js
 <script setup>
 import { ref } from 'vue';
-import { PipelineOrchestrator } from 'rest-pipeline-js';
-import { usePipelineProgressVue, usePipelineRunVue } from 'rest-pipeline-js';
+import { PipelineOrchestrator, usePipelineProgressVue, usePipelineRunVue } from 'rest-pipeline-js/vue';
 
 const pipelineConfig = { stages: [/* ... */] };
 const httpConfig = { baseURL: 'https://api.example.com' };
@@ -843,7 +841,7 @@ const { run, running, result, error } = usePipelineRunVue(orchestrator);
 
 ---
 
-Экспортируются composition-функции для интеграции rest-pipeline-js с Vue 3 (импортировать из 'rest-pipeline-js'):
+Экспортируются composition-функции для интеграции rest-pipeline-js с Vue 3 (импортировать из `rest-pipeline-js/vue`):
 
 - **usePipelineProgressVue(orchestrator)** — реактивный прогресс pipeline (Ref<PipelineProgress>)
 - **usePipelineRunVue(orchestrator)** — запуск pipeline и реактивные статусы (run, running, result, error)
@@ -860,11 +858,11 @@ const { run, running, result, error } = usePipelineRunVue(orchestrator);
 
 ```jsx
 import React from "react";
-import { PipelineOrchestrator } from "rest-pipeline-js";
 import {
+  PipelineOrchestrator,
   usePipelineProgressReact,
   usePipelineRunReact,
-} from "rest-pipeline-js";
+} from "rest-pipeline-js/react";
 
 const pipelineConfig = {
   stages: [
@@ -893,7 +891,7 @@ export function PipelineComponent() {
 
 ---
 
-Экспортируются хуки для интеграции rest-pipeline-js с React (импортировать из 'rest-pipeline-js'):
+Экспортируются хуки для интеграции rest-pipeline-js с React (импортировать из `rest-pipeline-js/react`):
 
 - **usePipelineProgressReact(orchestrator)** — подписка на прогресс pipeline (PipelineProgress)
 - **usePipelineRunReact(orchestrator)** — запуск pipeline и статусы ([run, { running, result, error }])
@@ -904,37 +902,17 @@ export function PipelineComponent() {
 
 ---
 
-## Замечания для сборщиков (Vue / React) — русский
+## Точки входа и импорты (русский)
 
-- Пакет предоставляет хелперы для Vue и React отдельно. Чтобы избежать подтягивания `react` в проекты на Vue, используйте явные subpath-импорты для фреймворк‑специфичных модулей.
+В пакете три точки входа, чтобы при использовании только ядра или Vue сборщик не подтягивал React.
 
-- Рекомендуемые импорты:
-  - Ядро (без привязки к фреймворку):
+| Точка входа | Назначение | Содержимое |
+|-------------|------------|------------|
+| `rest-pipeline-js` | Только ядро | `PipelineOrchestrator`, `createRestClient`, типы, rest-client, request-executor, error-handler, progress-tracker. Без Vue/React. |
+| `rest-pipeline-js/vue` | Проекты на Vue | Всё из ядра + Vue-хуки: usePipelineProgressVue, usePipelineRunVue, useRestClientVue, usePipelineStepEventVue, usePipelineLogsVue, useRerunPipelineStepVue. |
+| `rest-pipeline-js/react` | Проекты на React | Всё из ядра + React-хуки: usePipelineProgressReact, usePipelineRunReact, useRestClientReact, usePipelineStepEventReact, usePipelineLogsReact, useRerunPipelineStepReact. |
 
-    ```js
-    import { createRestClient, PipelineOrchestrator } from "rest-pipeline-js";
-    ```
-
-  - Vue (предпочтительно в проектах на Vue):
-
-    ```js
-    import {
-      usePipelineProgressVue,
-      usePipelineRunVue,
-    } from "rest-pipeline-js/usePipelineProgress-vue";
-    // или
-    import { useRestClientVue } from "rest-pipeline-js/useRestClient-vue";
-    ```
-
-  - React (предпочтительно в проектах на React):
-
-    ```js
-    import { usePipelineProgressReact } from "rest-pipeline-js/usePipelineProgress-react";
-    ```
-
-- Если вы ранее импортировали UI-хелперы из корня пакета, обновите импорты на subpath-версии — это предотвратит попытки резолва `react` в проектах без React.
-
-- Пакет помечен как `sideEffects: false` и объявляет `react`/`react-dom` в `peerDependencies`. При использовании React-хелперов потребитель должен установить `react` и `react-dom`.
+Рекомендуемые импорты: ядро — `rest-pipeline-js`; Vue — `rest-pipeline-js/vue`; React — `rest-pipeline-js/react`. Пакет помечен как `sideEffects: false`; `react`/`react-dom` в `peerDependencies` для входа React.
 
 ---
 

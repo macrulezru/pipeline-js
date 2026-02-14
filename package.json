@@ -1,62 +1,29 @@
 {
   "name": "rest-pipeline-js",
-  "version": "1.2.1",
+  "version": "1.2.5",
   "description": "Pipeline Orchestration Utilities for JavaScript REST API Clients",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
+      "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
-      "require": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "require": "./dist/index.js"
     },
-    "./useRestClient-vue": {
-      "import": "./dist/useRestClient-vue.js",
-      "require": "./dist/useRestClient-vue.js",
-      "types": "./dist/useRestClient-vue.d.ts"
+    "./vue": {
+      "types": "./dist/vue.d.ts",
+      "import": "./dist/vue.js",
+      "require": "./dist/vue.js"
     },
-    "./useRestClient-react": {
-      "import": "./dist/useRestClient-react.js",
-      "require": "./dist/useRestClient-react.js",
-      "types": "./dist/useRestClient-react.d.ts"
-    },
-    "./usePipelineProgress-vue": {
-      "import": "./dist/usePipelineProgress-vue.js",
-      "require": "./dist/usePipelineProgress-vue.js",
-      "types": "./dist/usePipelineProgress-vue.d.ts"
-    },
-    "./usePipelineProgress-react": {
-      "import": "./dist/usePipelineProgress-react.js",
-      "require": "./dist/usePipelineProgress-react.js",
-      "types": "./dist/usePipelineProgress-react.d.ts"
-    },
-    "./usePipelineRun-vue": {
-      "import": "./dist/usePipelineRun-vue.js",
-      "require": "./dist/usePipelineRun-vue.js",
-      "types": "./dist/usePipelineRun-vue.d.ts"
-    },
-    "./usePipelineRun-react": {
-      "import": "./dist/usePipelineRun-react.js",
-      "require": "./dist/usePipelineRun-react.js",
-      "types": "./dist/usePipelineRun-react.d.ts"
-    },
-    "./usePipelineStepEvents-vue": {
-      "import": "./dist/usePipelineStepEvents-vue.js",
-      "require": "./dist/usePipelineStepEvents-vue.js",
-      "types": "./dist/usePipelineStepEvents-vue.d.ts"
-    },
-    "./usePipelineStepEvents-react": {
-      "import": "./dist/usePipelineStepEvents-react.js",
-      "require": "./dist/usePipelineStepEvents-react.js",
-      "types": "./dist/usePipelineStepEvents-react.d.ts"
+    "./react": {
+      "types": "./dist/react.d.ts",
+      "import": "./dist/react.js",
+      "require": "./dist/react.js"
     }
   },
   "sideEffects": false,
   "scripts": {
-    "build": "npm run build:all",
-    "build:all": "tsc --build",
-    "build:vue": "tsc --project src/vue/tsconfig.json --outDir dist/vue",
-    "build:react": "tsc --project src/react/tsconfig.json --outDir dist/react",
+    "build": "tsc --build",
     "test": "vitest run",
     "demo:vue": "npm run start-demo-vite",
     "start-demo-vite": "vite --config vite.config.js"
