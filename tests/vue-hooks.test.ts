@@ -7,7 +7,7 @@ import {
   usePipelineLogsVue,
   useRerunPipelineStepVue,
   useRestClientVue,
-} from "rest-pipeline-js";
+} from "rest-pipeline-js/vue";
 
 describe("Vue hooks", () => {
   const pipelineConfig = {
