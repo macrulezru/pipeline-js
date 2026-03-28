@@ -1,24 +1,22 @@
-import { ref, onBeforeUnmount } from "vue";
+import { ref, onUnmounted } from "vue";
 import type { PipelineOrchestrator } from "./pipeline-orchestrator";
-import type { PipelineResult } from "./types";
+import type { PipelineResult, PipelineStepResult } from "./types";
 
 /**
- * Vue composition function to run pipeline and track status/result
- * @param orchestrator PipelineOrchestrator instance
- * @returns { run, running, result, error }
+ * Vue composition function to run pipeline and track status/result.
+ * @returns { run, running, result, error, stageResults, abort, pause, resume, rerunStep, clearStageResults }
  */
 export function usePipelineRunVue(orchestrator: PipelineOrchestrator) {
   const running = ref(false);
   const result = ref<PipelineResult | null>(null);
   const error = ref<any>(null);
-  const stageResults = ref<Record<string, any>>({});
+  const stageResults = ref<Record<string, PipelineStepResult>>({});
 
-  // Подписка на изменения stageResults orchestrator
   const unsubscribe = orchestrator.subscribeStageResults((results) => {
     stageResults.value = results;
   });
 
-  onBeforeUnmount(() => {
+  onUnmounted(() => {
     if (typeof unsubscribe === "function") unsubscribe();
   });
 
@@ -27,7 +25,6 @@ export function usePipelineRunVue(orchestrator: PipelineOrchestrator) {
     error.value = null;
     result.value = null;
     try {
-      // Предполагается, что у orchestrator есть метод run
       const res = await (orchestrator as any).run(...args);
       result.value = res;
       return res;
@@ -39,9 +36,28 @@ export function usePipelineRunVue(orchestrator: PipelineOrchestrator) {
     }
   }
 
-  function clearStageResults() {
-    stageResults.value = {};
+  function abort() {
+    orchestrator.abort();
   }
 
-  return { run, running, result, error, stageResults, clearStageResults };
+  function pause() {
+    orchestrator.pause();
+  }
+
+  function resume() {
+    orchestrator.resume();
+  }
+
+  function rerunStep(
+    stepKey: string,
+    options?: Parameters<PipelineOrchestrator["rerunStep"]>[1],
+  ) {
+    return orchestrator.rerunStep(stepKey, options);
+  }
+
+  function clearStageResults() {
+    orchestrator.clearStageResults();
+  }
+
+  return { run, running, result, error, stageResults, abort, pause, resume, rerunStep, clearStageResults };
 }

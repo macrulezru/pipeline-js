@@ -77,7 +77,7 @@ export type PipelineStageConfig<Input = any, Output = any> = {
         allResults: Record<string, PipelineStepResult>;
         sharedData: Record<string, any>;
     }) => Promise<Output> | Output;
-    /** Условие выполнения шага */
+    /** Условие выполнения шага (возвращает false → шаг пропускается со статусом 'skipped') */
     condition?: (params: {
         prev: Input;
         allResults: Record<string, PipelineStepResult>;
@@ -119,19 +119,55 @@ export type PipelineStageConfig<Input = any, Output = any> = {
     pauseAfter?: number;
 };
 /**
+ * Группа параллельно выполняемых шагов
+ */
+export type ParallelStageGroup = {
+    /** Уникальный ключ группы (используется для отслеживания прогресса) */
+    key: string;
+    /** Шаги, выполняемые параллельно */
+    parallel: PipelineStageConfig[];
+};
+/** Один элемент pipeline — либо обычный шаг, либо группа параллельных шагов */
+export type PipelineItem = PipelineStageConfig | ParallelStageGroup;
+/**
+ * Middleware для всего pipeline (глобальные хуки)
+ */
+export type PipelineMiddleware = {
+    /** Вызывается перед каждым шагом (до stage.before) */
+    beforeEach?: (params: {
+        stage: PipelineStageConfig;
+        index: number;
+        sharedData: Record<string, any>;
+    }) => Promise<void> | void;
+    /** Вызывается после каждого успешного шага (после stage.after) */
+    afterEach?: (params: {
+        stage: PipelineStageConfig;
+        index: number;
+        result: PipelineStepResult;
+        sharedData: Record<string, any>;
+    }) => Promise<void> | void;
+    /** Вызывается при ошибке шага */
+    onError?: (params: {
+        stage: PipelineStageConfig;
+        index: number;
+        error: ApiError;
+        sharedData: Record<string, any>;
+    }) => Promise<void> | void;
+};
+/**
  * Статус выполнения шага pipeline
  */
 export type PipelineStepStatus = "pending" | "loading" | "success" | "error" | "skipped";
 /**
  * Результат выполнения шага pipeline
  */
-export type PipelineStepResult = {
+export type PipelineStepResult<T = any> = {
     /** Статус шага */
     status: PipelineStepStatus;
     /** Данные результата (если успех) */
-    data?: any;
+    data?: T;
     /** Ошибка (если error) */
-    error?: import("./types").ApiError;
+    error?: ApiError;
     /** URL команды шага (если применимо) */
     url?: string;
 };
@@ -139,7 +175,9 @@ export type PipelineStepResult = {
  * Конфиг всего pipeline (массив этапов)
  */
 export type PipelineConfig = {
-    stages: PipelineStageConfig[];
+    stages: PipelineItem[];
+    /** Глобальные middleware — вызываются для каждого шага */
+    middleware?: PipelineMiddleware;
 };
 /**
  * Прогресс выполнения pipeline
@@ -161,4 +199,37 @@ export type PipelineResult = {
     stageResults: PipelineStageResults;
     /** true, если pipeline завершился успешно */
     success: boolean;
+};
+/**
+ * Событие шага pipeline
+ */
+export type PipelineStepEvent = {
+    /** Индекс шага */
+    stepIndex: number;
+    /** Ключ шага */
+    stepKey: string;
+    /** Статус шага */
+    status: PipelineStepStatus;
+    /** Данные результата (если успех) */
+    data?: any;
+    /** Ошибка (если error) */
+    error?: ApiError;
+    /** Снимок всех результатов на момент события */
+    stageResults: Record<string, PipelineStepResult>;
+};
+/**
+ * Callback для подписки на события этапов pipeline
+ */
+export type PipelineStepEventHandler = (event: PipelineStepEvent) => void | Promise<void>;
+/**
+ * Снимок состояния pipeline для экспорта/импорта
+ */
+export type PipelineExportedState = {
+    stageResults: Record<string, PipelineStepResult>;
+    logs: Array<{
+        type: string;
+        message: string;
+        data?: any;
+        timestamp: string;
+    }>;
 };

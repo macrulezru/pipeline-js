@@ -23,11 +23,11 @@ export class ProgressTracker {
   }
 
   /**
-   * Возвращает текущий снимок состояния прогресса (не реактивный).
-   * Для отслеживания изменений используйте subscribeProgress.
+   * Возвращает снимок текущего прогресса.
+   * Алиас для getProgress() — для отслеживания изменений используйте subscribeProgress.
    */
   getProgressRef() {
-    return this.progress;
+    return { ...this.progress };
   }
 
   updateStage(

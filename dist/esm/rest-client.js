@@ -1,18 +1,19 @@
 import axios from 'axios';
+import { TtlCache } from './cache';
+import { RateLimiter } from './rate-limiter';
 export function toApiError(error) {
     var _a;
     if (axios.isCancel(error)) {
         return {
-            message: 'Запрос был отменен',
+            message: 'Request was cancelled',
             code: 'REQUEST_CANCELLED',
         };
     }
     if (axios.isAxiosError(error)) {
-        const axiosError = error;
         return {
-            message: axiosError.message,
-            code: axiosError.code,
-            status: (_a = axiosError.response) === null || _a === void 0 ? void 0 : _a.status,
+            message: error.message,
+            code: error.code,
+            status: (_a = error.response) === null || _a === void 0 ? void 0 : _a.status,
             timestamp: new Date(),
         };
     }
@@ -23,11 +24,16 @@ export function toApiError(error) {
         };
     }
     return {
-        message: 'Произошла неизвестная ошибка',
+        message: 'An unknown error occurred',
         timestamp: new Date(),
     };
 }
+const MAX_CLIENT_CACHE_SIZE = 100;
 const restClientCache = new Map();
+/** Очистить кэш клиентов (полезно в тестах или при смене конфигурации) */
+export function clearRestClientCache() {
+    restClientCache.clear();
+}
 export function createRestClient(config) {
     const httpClient = axios.create({
         baseURL: config.baseURL,
@@ -35,14 +41,33 @@ export function createRestClient(config) {
         headers: config.headers,
         withCredentials: config.withCredentials,
     });
-    // ...реализация rate limit, cache, interceptors, request, etc. (скопировать из rest.ts при необходимости)
-    // Для краткости: реализуйте полный функционал по мере необходимости.
+    // --- Кэш ответов ---
+    const responseCache = new TtlCache(1000);
+    // --- Rate limiter ---
+    const rateLimiter = config.rateLimit ? new RateLimiter(config.rateLimit) : null;
+    function buildCacheKey(method, url, req) {
+        return JSON.stringify({
+            method: method.toUpperCase(),
+            url,
+            params: req === null || req === void 0 ? void 0 : req.params,
+            cacheKey: req === null || req === void 0 ? void 0 : req.cacheKey,
+        });
+    }
     async function request(command, req) {
-        var _a, _b, _c, _d, _e, _f, _g, _h;
+        var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p;
         const reqId = (_a = req === null || req === void 0 ? void 0 : req.requestId) !== null && _a !== void 0 ? _a : Math.random().toString(36).slice(2);
         const methodUpper = ((_b = req === null || req === void 0 ? void 0 : req.method) !== null && _b !== void 0 ? _b : 'GET').toUpperCase();
-        const fullUrl = `${config.baseURL}${command}`;
-        (_d = (_c = config.metrics) === null || _c === void 0 ? void 0 : _c.onRequestStart) === null || _d === void 0 ? void 0 : _d.call(_c, {
+        const fullUrl = `${(_c = config.baseURL) !== null && _c !== void 0 ? _c : ''}${command}`;
+        // --- Проверка кэша ---
+        const cacheEnabled = (_d = req === null || req === void 0 ? void 0 : req.useCache) !== null && _d !== void 0 ? _d : (((_e = config.cache) === null || _e === void 0 ? void 0 : _e.enabled) && methodUpper === 'GET');
+        const cacheTtl = (_h = (_f = req === null || req === void 0 ? void 0 : req.cacheTtlMs) !== null && _f !== void 0 ? _f : (_g = config.cache) === null || _g === void 0 ? void 0 : _g.ttlMs) !== null && _h !== void 0 ? _h : 60000;
+        if (cacheEnabled) {
+            const cacheKey = buildCacheKey(methodUpper, fullUrl, req);
+            const cached = responseCache.get(cacheKey);
+            if (cached)
+                return cached;
+        }
+        (_k = (_j = config.metrics) === null || _j === void 0 ? void 0 : _j.onRequestStart) === null || _k === void 0 ? void 0 : _k.call(_j, {
             id: reqId,
             method: methodUpper,
             url: fullUrl,
@@ -52,6 +77,11 @@ export function createRestClient(config) {
             requestHeaders: req === null || req === void 0 ? void 0 : req.headers,
         });
         const startTs = Date.now();
+        // --- Rate limiting ---
+        let release;
+        if (rateLimiter && !(req === null || req === void 0 ? void 0 : req.skipRateLimit)) {
+            release = await rateLimiter.acquire();
+        }
         try {
             const response = await httpClient.request({
                 url: command,
@@ -64,11 +94,11 @@ export function createRestClient(config) {
                 headers: response.headers,
             };
             const duration = Date.now() - startTs;
-            // --- вычисление размера ответа ---
-            let responseBytes = undefined;
+            // --- Вычисление размера ответа ---
+            let responseBytes;
             const headers = response.headers;
-            const contentLengthHeader = headers['content-length'] || headers['Content-Length'] || undefined;
-            const parsedLength = contentLengthHeader ? Number(contentLengthHeader) : undefined;
+            const contentLengthHeader = headers['content-length'] || headers['Content-Length'];
+            const parsedLength = contentLengthHeader ? Number(contentLengthHeader) : NaN;
             if (Number.isFinite(parsedLength) && parsedLength !== 0) {
                 responseBytes = parsedLength;
             }
@@ -79,15 +109,14 @@ export function createRestClient(config) {
                         responseBytes = new TextEncoder().encode(raw).length;
                     }
                     else if (raw !== undefined) {
-                        const str = JSON.stringify(raw);
-                        responseBytes = new TextEncoder().encode(str).length;
+                        responseBytes = new TextEncoder().encode(JSON.stringify(raw)).length;
                     }
                 }
                 catch {
                     // ignore sizing errors
                 }
             }
-            (_f = (_e = config.metrics) === null || _e === void 0 ? void 0 : _e.onRequestEnd) === null || _f === void 0 ? void 0 : _f.call(_e, {
+            (_m = (_l = config.metrics) === null || _l === void 0 ? void 0 : _l.onRequestEnd) === null || _m === void 0 ? void 0 : _m.call(_l, {
                 id: reqId,
                 durationMs: duration,
                 status: response.status,
@@ -95,65 +124,81 @@ export function createRestClient(config) {
                 responseBody: response.data,
                 responseHeaders: response.headers,
             });
+            // --- Сохранение в кэш ---
+            if (cacheEnabled) {
+                const cacheKey = buildCacheKey(methodUpper, fullUrl, req);
+                responseCache.set(cacheKey, payload, cacheTtl);
+            }
             return payload;
         }
         catch (error) {
             const duration = Date.now() - startTs;
-            (_h = (_g = config.metrics) === null || _g === void 0 ? void 0 : _g.onRequestEnd) === null || _h === void 0 ? void 0 : _h.call(_g, {
+            (_p = (_o = config.metrics) === null || _o === void 0 ? void 0 : _o.onRequestEnd) === null || _p === void 0 ? void 0 : _p.call(_o, {
                 id: reqId,
                 durationMs: duration,
                 error: toApiError(error),
             });
             throw error;
         }
-    }
-    // --- Реализация cancellableRequest ---
-    const cancelTokenSources = new Map();
-    function cancelRequest(key) {
-        const source = cancelTokenSources.get(key);
-        if (source) {
-            source.cancel(`Запрос отменен по ключу: ${key}`);
-            cancelTokenSources.delete(key);
+        finally {
+            release === null || release === void 0 ? void 0 : release();
         }
     }
-    async function cancellableRequest(key, command, config) {
+    // --- Cancellable requests через AbortController (не CancelToken) ---
+    const abortControllers = new Map();
+    function cancelRequest(key) {
+        var _a;
+        (_a = abortControllers.get(key)) === null || _a === void 0 ? void 0 : _a.abort();
+        abortControllers.delete(key);
+    }
+    async function cancellableRequest(key, command, reqConfig) {
         cancelRequest(key);
-        const axios = await import('axios');
-        const source = axios.default.CancelToken.source();
-        cancelTokenSources.set(key, source);
+        const controller = new AbortController();
+        abortControllers.set(key, controller);
         try {
             return await request(command, {
-                ...config,
-                cancelToken: source.token,
+                ...reqConfig,
+                signal: controller.signal,
             });
         }
         finally {
-            cancelTokenSources.delete(key);
+            abortControllers.delete(key);
         }
     }
     return {
         request,
-        get: (command, config) => request(command, { ...config, method: 'GET' }),
-        post: (command, data, config) => request(command, { ...config, method: 'POST', data }),
-        put: (command, data, config) => request(command, { ...config, method: 'PUT', data }),
-        delete: (command, config) => request(command, { ...config, method: 'DELETE' }),
+        get: (command, reqConfig) => request(command, { ...reqConfig, method: 'GET' }),
+        post: (command, data, reqConfig) => request(command, { ...reqConfig, method: 'POST', data }),
+        put: (command, data, reqConfig) => request(command, { ...reqConfig, method: 'PUT', data }),
+        patch: (command, data, reqConfig) => request(command, { ...reqConfig, method: 'PATCH', data }),
+        delete: (command, reqConfig) => request(command, { ...reqConfig, method: 'DELETE' }),
         cancellableRequest,
         cancelRequest,
+        /** Очистить кэш ответов данного клиента */
+        clearCache: () => responseCache.clear(),
     };
 }
 export function getRestClient(config) {
-    var _a, _b;
+    var _a, _b, _c, _d;
     const key = JSON.stringify({
         baseURL: config.baseURL,
         timeout: config.timeout,
         withCredentials: config.withCredentials,
         headers: (_a = config.headers) !== null && _a !== void 0 ? _a : {},
         retry: (_b = config.retry) !== null && _b !== void 0 ? _b : {},
+        cache: (_c = config.cache) !== null && _c !== void 0 ? _c : {},
+        rateLimit: (_d = config.rateLimit) !== null && _d !== void 0 ? _d : {},
         metrics: !!config.metrics,
     });
     const cachedClient = restClientCache.get(key);
     if (cachedClient)
         return cachedClient;
+    // Evict старейшую запись при переполнении
+    if (restClientCache.size >= MAX_CLIENT_CACHE_SIZE) {
+        const oldestKey = restClientCache.keys().next().value;
+        if (oldestKey !== undefined)
+            restClientCache.delete(oldestKey);
+    }
     const client = createRestClient(config);
     restClientCache.set(key, client);
     return client;
