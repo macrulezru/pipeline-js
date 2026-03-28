@@ -3,20 +3,18 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.usePipelineRunVue = usePipelineRunVue;
 const vue_1 = require("vue");
 /**
- * Vue composition function to run pipeline and track status/result
- * @param orchestrator PipelineOrchestrator instance
- * @returns { run, running, result, error }
+ * Vue composition function to run pipeline and track status/result.
+ * @returns { run, running, result, error, stageResults, abort, pause, resume, rerunStep, clearStageResults }
  */
 function usePipelineRunVue(orchestrator) {
     const running = (0, vue_1.ref)(false);
     const result = (0, vue_1.ref)(null);
     const error = (0, vue_1.ref)(null);
     const stageResults = (0, vue_1.ref)({});
-    // Подписка на изменения stageResults orchestrator
     const unsubscribe = orchestrator.subscribeStageResults((results) => {
         stageResults.value = results;
     });
-    (0, vue_1.onBeforeUnmount)(() => {
+    (0, vue_1.onUnmounted)(() => {
         if (typeof unsubscribe === "function")
             unsubscribe();
     });
@@ -25,7 +23,6 @@ function usePipelineRunVue(orchestrator) {
         error.value = null;
         result.value = null;
         try {
-            // Предполагается, что у orchestrator есть метод run
             const res = await orchestrator.run(...args);
             result.value = res;
             return res;
@@ -38,8 +35,20 @@ function usePipelineRunVue(orchestrator) {
             running.value = false;
         }
     }
-    function clearStageResults() {
-        stageResults.value = {};
+    function abort() {
+        orchestrator.abort();
     }
-    return { run, running, result, error, stageResults, clearStageResults };
+    function pause() {
+        orchestrator.pause();
+    }
+    function resume() {
+        orchestrator.resume();
+    }
+    function rerunStep(stepKey, options) {
+        return orchestrator.rerunStep(stepKey, options);
+    }
+    function clearStageResults() {
+        orchestrator.clearStageResults();
+    }
+    return { run, running, result, error, stageResults, abort, pause, resume, rerunStep, clearStageResults };
 }

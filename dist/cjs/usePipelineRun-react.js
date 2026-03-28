@@ -3,20 +3,23 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.usePipelineRunReact = usePipelineRunReact;
 const react_1 = require("react");
 /**
- * React hook to run pipeline and track status/result
- * @param orchestrator PipelineOrchestrator instance
- * @returns [run, { running, result, error }]
+ * React hook to run pipeline and track status/result.
+ * @returns [run, { running, result, error, stageResults, abort, rerunStep }]
  */
 function usePipelineRunReact(orchestrator) {
     const [running, setRunning] = (0, react_1.useState)(false);
     const [result, setResult] = (0, react_1.useState)(null);
     const [error, setError] = (0, react_1.useState)(null);
+    const [stageResults, setStageResults] = (0, react_1.useState)({});
+    (0, react_1.useEffect)(() => {
+        const unsubscribe = orchestrator.subscribeStageResults(setStageResults);
+        return () => unsubscribe();
+    }, [orchestrator]);
     const run = (0, react_1.useCallback)(async (...args) => {
         setRunning(true);
         setError(null);
         setResult(null);
         try {
-            // Предполагается, что у orchestrator есть метод run
             const res = await orchestrator.run(...args);
             setResult(res);
             return res;
@@ -29,5 +32,9 @@ function usePipelineRunReact(orchestrator) {
             setRunning(false);
         }
     }, [orchestrator]);
-    return [run, { running, result, error }];
+    const abort = (0, react_1.useCallback)(() => orchestrator.abort(), [orchestrator]);
+    const pause = (0, react_1.useCallback)(() => orchestrator.pause(), [orchestrator]);
+    const resume = (0, react_1.useCallback)(() => orchestrator.resume(), [orchestrator]);
+    const rerunStep = (0, react_1.useCallback)((stepKey, options) => orchestrator.rerunStep(stepKey, options), [orchestrator]);
+    return [run, { running, result, error, stageResults, abort, pause, resume, rerunStep }];
 }

@@ -1,9 +1,15 @@
 import type { RestRequestConfig, HttpConfig, ApiResponse } from './types';
 export declare class RequestExecutor {
+    private httpConfig;
     private client;
+    private retryCfg;
     constructor(httpConfig: HttpConfig);
     /**
-     * Выполнение одного запроса с поддержкой retry и таймаута
+     * Выполнение одного запроса с поддержкой:
+     * - retry с задержкой, экспоненциальным backoff и jitter
+     * - фильтрацией retry по HTTP-статусу (retriableStatus)
+     * - таймаута через AbortController (реально отменяет HTTP-запрос)
+     * - внешнего AbortSignal (от orchestrator.abort())
      */
-    execute<T = any>(command: string, reqConfig?: RestRequestConfig, retryCount?: number, timeoutMs?: number): Promise<ApiResponse<T>>;
+    execute<T = any>(command: string, reqConfig?: RestRequestConfig, retryCount?: number, timeoutMs?: number, externalSignal?: AbortSignal): Promise<ApiResponse<T>>;
 }
