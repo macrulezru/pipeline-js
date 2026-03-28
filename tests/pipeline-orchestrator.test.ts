@@ -4,8 +4,8 @@ import type { PipelineConfig } from "../src/types";
 describe("PipelineOrchestrator", () => {
   const pipelineConfig: PipelineConfig = {
     stages: [
-      { key: "step1", request: async () => "ok1" },
-      { key: "step2", request: async (prev) => prev + "-ok2" },
+      { key: "step1", request: async () => ({ v: "ok1" }) },
+      { key: "step2", request: async ({ prev }: any) => ({ v: prev.v + "-ok2" }) },
     ],
   };
   const httpConfig = { baseURL: "http://localhost" };
@@ -17,8 +17,8 @@ describe("PipelineOrchestrator", () => {
     });
     const result = await orchestrator.run();
     expect(result.success).toBe(true);
-    expect(result.stageResults.step1.data).toBe("ok1");
-    expect(result.stageResults.step2.data).toBe("ok1-ok2");
+    expect(result.stageResults.step1.data).toEqual({ v: "ok1" });
+    expect(result.stageResults.step2.data).toEqual({ v: "ok1-ok2" });
   });
 
   it("subscribeProgress() - should receive progress updates", async () => {
@@ -42,7 +42,7 @@ describe("PipelineOrchestrator", () => {
     orchestrator.subscribeStageResults((r) => results.push(r));
     await orchestrator.run();
     expect(results.length).toBeGreaterThan(0);
-    expect(results[results.length - 1].step2.data).toBe("ok1-ok2");
+    expect(results[results.length - 1].step2.data).toEqual({ v: "ok1-ok2" });
   });
 
   it("on() - should handle custom events", async () => {
@@ -66,7 +66,7 @@ describe("PipelineOrchestrator", () => {
     await orchestrator.run();
     const res = await orchestrator.rerunStep("step2");
     expect(res?.status).toBe("success");
-    expect(res?.data).toBe("ok1-ok2");
+    expect(res?.data).toEqual({ v: "ok1-ok2" });
   });
 
   it("abort() and isAborted()", async () => {
