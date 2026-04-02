@@ -1,9 +1,45 @@
 // --- Типы для HTTP и REST ---
+
+/**
+ * Провайдер аутентификации.
+ * Вызывается перед каждым запросом для получения токена.
+ * При 401-ответе вызывается onUnauthorized (если задан), после чего запрос повторяется один раз.
+ */
+export interface AuthProvider {
+  /** Возвращает токен для заголовка Authorization: Bearer <token> */
+  getToken(): Promise<string>;
+  /**
+   * Вызывается при получении 401 — здесь нужно обновить токен.
+   * После возврата из этого метода запрос будет выполнен повторно с новым токеном.
+   * Повтор происходит только один раз во избежание бесконечной петли.
+   */
+  onUnauthorized?(): Promise<void>;
+}
+
+/**
+ * Заголовки, которые маскируются в логах по умолчанию при sanitizeHeaders: true.
+ * Можно расширить через HttpConfig.sensitiveHeaders.
+ */
+export const DEFAULT_SENSITIVE_HEADERS = [
+  'authorization',
+  'x-api-key',
+  'x-auth-token',
+  'cookie',
+  'set-cookie',
+  'proxy-authorization',
+] as const;
+
 export interface RetryConfig {
   attempts: number;
   delayMs: number;
   backoffMultiplier: number;
   retriableStatus?: number[];
+  /**
+   * Максимальное время ожидания из заголовка Retry-After в мс.
+   * Если сервер вернул Retry-After больше этого значения — будет использован этот потолок.
+   * По умолчанию: 60 000 (1 минута).
+   */
+  maxRetryAfterMs?: number;
 }
 
 export type RetryOptions = Partial<RetryConfig>;
@@ -49,6 +85,18 @@ export interface HttpConfig {
   cache?: CacheConfig;
   rateLimit?: RateLimitConfig;
   metrics?: MetricsHandler;
+  /** Провайдер аутентификации с автоматическим обновлением токена при 401 */
+  auth?: AuthProvider;
+  /**
+   * Маскировать чувствительные заголовки в метриках (onRequestStart/onRequestEnd).
+   * По умолчанию: false. В production рекомендуется включить.
+   */
+  sanitizeHeaders?: boolean;
+  /**
+   * Дополнительные заголовки для маскирования (дополняют DEFAULT_SENSITIVE_HEADERS).
+   * Сравнение без учёта регистра.
+   */
+  sensitiveHeaders?: string[];
 }
 
 export interface ApiError {
