@@ -3,6 +3,7 @@ import axios from 'axios';
 import { TtlCache } from './cache';
 import { RateLimiter } from './rate-limiter';
 import type { HttpConfig, ApiError, ApiResponse, RestRequestConfig } from './types';
+import { DEFAULT_SENSITIVE_HEADERS } from './types';
 import type { AxiosInstance, AxiosResponse } from 'axios';
 
 type RestClient = ReturnType<typeof createRestClient>;
@@ -34,6 +35,34 @@ export function toApiError(error: unknown): ApiError {
   };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Log sanitization
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Маскирует чувствительные заголовки в объекте перед передачей в метрики.
+ * Не мутирует оригинальный объект.
+ */
+export function sanitizeHeadersMap(
+  headers: Record<string, string> | undefined,
+  extraSensitive: string[] = [],
+): Record<string, string> | undefined {
+  if (!headers) return headers;
+  const blocked = new Set([
+    ...DEFAULT_SENSITIVE_HEADERS.map((h) => h.toLowerCase()),
+    ...extraSensitive.map((h) => h.toLowerCase()),
+  ]);
+  return Object.fromEntries(
+    Object.entries(headers).map(([k, v]) =>
+      blocked.has(k.toLowerCase()) ? [k, 'REDACTED'] : [k, v],
+    ),
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Client cache
+// ─────────────────────────────────────────────────────────────────────────────
+
 const MAX_CLIENT_CACHE_SIZE = 100;
 const restClientCache: Map<string, RestClient> = new Map();
 
@@ -41,6 +70,10 @@ const restClientCache: Map<string, RestClient> = new Map();
 export function clearRestClientCache(): void {
   restClientCache.clear();
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// createRestClient
+// ─────────────────────────────────────────────────────────────────────────────
 
 export function createRestClient(config: HttpConfig) {
   const httpClient: AxiosInstance = axios.create({
@@ -56,6 +89,16 @@ export function createRestClient(config: HttpConfig) {
   // --- Rate limiter ---
   const rateLimiter = config.rateLimit ? new RateLimiter(config.rateLimit) : null;
 
+  // --- Sanitization helpers ---
+  const shouldSanitize = config.sanitizeHeaders ?? false;
+  const extraSensitive = config.sensitiveHeaders ?? [];
+
+  function maybeSanitize(
+    headers: Record<string, string> | undefined,
+  ): Record<string, string> | undefined {
+    return shouldSanitize ? sanitizeHeadersMap(headers, extraSensitive) : headers;
+  }
+
   function buildCacheKey(method: string, url: string, req?: RestRequestConfig): string {
     return JSON.stringify({
       method: method.toUpperCase(),
@@ -65,13 +108,28 @@ export function createRestClient(config: HttpConfig) {
     });
   }
 
+  // ── Основная функция запроса ────────────────────────────────────────────────
+  // _retried — внутренний флаг, предотвращает бесконечную петлю при 401-retry
   async function request<T = unknown>(
     command: string,
     req?: RestRequestConfig,
+    _retried = false,
   ): Promise<ApiResponse<T>> {
     const reqId = req?.requestId ?? Math.random().toString(36).slice(2);
     const methodUpper = (req?.method ?? 'GET').toUpperCase();
     const fullUrl = `${config.baseURL ?? ''}${command}`;
+
+    // --- Auth: получаем токен и инжектируем заголовок ---
+    let authHeaders: Record<string, string> = {};
+    if (config.auth) {
+      const token = await config.auth.getToken();
+      authHeaders = { Authorization: `Bearer ${token}` };
+    }
+
+    const mergedHeaders: Record<string, string> = {
+      ...(req?.headers as Record<string, string> | undefined),
+      ...authHeaders,
+    };
 
     // --- Проверка кэша ---
     const cacheEnabled =
@@ -90,7 +148,7 @@ export function createRestClient(config: HttpConfig) {
       timestamp: Date.now(),
       requestBody: req?.data,
       requestParams: req?.params,
-      requestHeaders: req?.headers as Record<string, string>,
+      requestHeaders: maybeSanitize(mergedHeaders),
     });
 
     const startTs = Date.now();
@@ -105,6 +163,7 @@ export function createRestClient(config: HttpConfig) {
       const response: AxiosResponse<T> = await httpClient.request<T>({
         url: command,
         ...req,
+        headers: mergedHeaders,
       });
 
       const payload: ApiResponse<T> = {
@@ -143,7 +202,7 @@ export function createRestClient(config: HttpConfig) {
         status: response.status,
         bytes: responseBytes,
         responseBody: response.data,
-        responseHeaders: response.headers as Record<string, string>,
+        responseHeaders: maybeSanitize(response.headers as Record<string, string>),
       });
 
       // --- Сохранение в кэш ---
@@ -153,8 +212,21 @@ export function createRestClient(config: HttpConfig) {
       }
 
       return payload;
-    } catch (error) {
+    } catch (error: unknown) {
       const duration = Date.now() - startTs;
+
+      // --- Auth: 401 → onUnauthorized() → одна попытка повтора ---
+      if (
+        config.auth &&
+        !_retried &&
+        axios.isAxiosError(error) &&
+        error.response?.status === 401
+      ) {
+        await config.auth.onUnauthorized?.();
+        // Повторяем с флагом _retried=true — второй 401 уже не будет перехвачен
+        return request<T>(command, req, true);
+      }
+
       config.metrics?.onRequestEnd?.({
         id: reqId,
         durationMs: duration,
@@ -166,7 +238,7 @@ export function createRestClient(config: HttpConfig) {
     }
   }
 
-  // --- Cancellable requests через AbortController (не CancelToken) ---
+  // --- Cancellable requests через AbortController ---
   const abortControllers = new Map<string, AbortController>();
 
   function cancelRequest(key: string): void {
@@ -229,7 +301,10 @@ export function getRestClient(config: HttpConfig): RestClient {
     retry: config.retry ?? {},
     cache: config.cache ?? {},
     rateLimit: config.rateLimit ?? {},
+    sanitizeHeaders: config.sanitizeHeaders ?? false,
+    sensitiveHeaders: config.sensitiveHeaders ?? [],
     metrics: !!config.metrics,
+    auth: !!config.auth,
   });
 
   const cachedClient = restClientCache.get(key);

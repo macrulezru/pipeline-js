@@ -54,7 +54,7 @@ const pipelineConfig = {
       }) => {
         sharedData.apiDate = prev["api-date"];
         const direction = prev.directions.find(
-          (item: any) => item.date === sharedData.apiDate
+          (item: any) => item.date === sharedData.apiDate,
         );
         let randomFlight = null;
         if (
@@ -93,7 +93,7 @@ const pipelineConfig = {
 const orchestrator = new PipelineOrchestrator({
   config: pipelineConfig,
   httpConfig: {
-    baseURL: "https://api.macrulez.ru/v1/fly",
+    baseURL: "https://macrulez-api.ru/api/portfolio/fly",
     timeout: 10000,
   },
 });
@@ -107,7 +107,7 @@ const totalStages = pipelineConfig.stages.length;
 const completedStages = computed(() => {
   if (!progress.value || !progress.value.stageStatuses) return 0;
   return Object.values(progress.value.stageStatuses).filter(
-    (status) => status === "success" || status === "error"
+    (status) => status === "success" || status === "error",
   ).length;
 });
 
