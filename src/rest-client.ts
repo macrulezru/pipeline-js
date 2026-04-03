@@ -1,18 +1,26 @@
-import axios from 'axios';
+import axios from "axios";
 
-import { TtlCache } from './cache';
-import { RateLimiter } from './rate-limiter';
-import type { HttpConfig, ApiError, ApiResponse, RestRequestConfig } from './types';
-import { DEFAULT_SENSITIVE_HEADERS } from './types';
-import type { AxiosInstance, AxiosResponse } from 'axios';
+import { TtlCache } from "./cache";
+import { RateLimiter } from "./rate-limiter";
+import type {
+  HttpConfig,
+  ApiError,
+  ApiResponse,
+  RestRequestConfig,
+  RequestInterceptor,
+  ResponseInterceptor,
+  ErrorInterceptor,
+} from "./types";
+import { DEFAULT_SENSITIVE_HEADERS } from "./types";
+import type { AxiosInstance, AxiosResponse } from "axios";
 
 type RestClient = ReturnType<typeof createRestClient>;
 
 export function toApiError(error: unknown): ApiError {
   if (axios.isCancel(error)) {
     return {
-      message: 'Request was cancelled',
-      code: 'REQUEST_CANCELLED',
+      message: "Request was cancelled",
+      code: "REQUEST_CANCELLED",
     };
   }
   if (axios.isAxiosError(error)) {
@@ -30,7 +38,7 @@ export function toApiError(error: unknown): ApiError {
     };
   }
   return {
-    message: 'An unknown error occurred',
+    message: "An unknown error occurred",
     timestamp: new Date(),
   };
 }
@@ -54,9 +62,31 @@ export function sanitizeHeadersMap(
   ]);
   return Object.fromEntries(
     Object.entries(headers).map(([k, v]) =>
-      blocked.has(k.toLowerCase()) ? [k, 'REDACTED'] : [k, v],
+      blocked.has(k.toLowerCase()) ? [k, "REDACTED"] : [k, v],
     ),
   );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Нормализовать значение в массив */
+function toArray<T>(value: T | T[] | undefined): T[] {
+  if (!value) return [];
+  return Array.isArray(value) ? value : [value];
+}
+
+/** Применить цепочку перехватчиков к значению */
+async function applyInterceptors<T>(
+  interceptors: Array<(v: T) => T | Promise<T>>,
+  value: T,
+): Promise<T> {
+  let result = value;
+  for (const interceptor of interceptors) {
+    result = await interceptor(result);
+  }
+  return result;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -87,19 +117,39 @@ export function createRestClient(config: HttpConfig) {
   const responseCache = new TtlCache<string, ApiResponse<any>>(1000);
 
   // --- Rate limiter ---
-  const rateLimiter = config.rateLimit ? new RateLimiter(config.rateLimit) : null;
+  const rateLimiter = config.rateLimit
+    ? new RateLimiter(config.rateLimit)
+    : null;
 
   // --- Sanitization helpers ---
   const shouldSanitize = config.sanitizeHeaders ?? false;
   const extraSensitive = config.sensitiveHeaders ?? [];
 
+  // --- Interceptors ---
+  const reqInterceptors = toArray<RequestInterceptor>(
+    config.interceptors?.request,
+  );
+  const resInterceptors = toArray<ResponseInterceptor>(
+    config.interceptors?.response,
+  );
+  const errInterceptors = toArray<ErrorInterceptor>(config.interceptors?.error);
+
+  // --- In-flight deduplication map ---
+  const inFlightRequests = new Map<string, Promise<ApiResponse<any>>>();
+
   function maybeSanitize(
     headers: Record<string, string> | undefined,
   ): Record<string, string> | undefined {
-    return shouldSanitize ? sanitizeHeadersMap(headers, extraSensitive) : headers;
+    return shouldSanitize
+      ? sanitizeHeadersMap(headers, extraSensitive)
+      : headers;
   }
 
-  function buildCacheKey(method: string, url: string, req?: RestRequestConfig): string {
+  function buildCacheKey(
+    method: string,
+    url: string,
+    req?: RestRequestConfig,
+  ): string {
     return JSON.stringify({
       method: method.toUpperCase(),
       url,
@@ -108,16 +158,16 @@ export function createRestClient(config: HttpConfig) {
     });
   }
 
-  // ── Основная функция запроса ────────────────────────────────────────────────
+  // ── Внутренняя логика одного HTTP-запроса (без dedup-обёртки) ──────────────
   // _retried — внутренний флаг, предотвращает бесконечную петлю при 401-retry
-  async function request<T = unknown>(
+  async function _executeRequest<T = unknown>(
     command: string,
     req?: RestRequestConfig,
     _retried = false,
   ): Promise<ApiResponse<T>> {
     const reqId = req?.requestId ?? Math.random().toString(36).slice(2);
-    const methodUpper = (req?.method ?? 'GET').toUpperCase();
-    const fullUrl = `${config.baseURL ?? ''}${command}`;
+    const methodUpper = (req?.method ?? "GET").toUpperCase();
+    const fullUrl = `${config.baseURL ?? ""}${command}`;
 
     // --- Auth: получаем токен и инжектируем заголовок ---
     let authHeaders: Record<string, string> = {};
@@ -131,14 +181,10 @@ export function createRestClient(config: HttpConfig) {
       ...authHeaders,
     };
 
-    // --- Проверка кэша ---
-    const cacheEnabled =
-      req?.useCache ?? (config.cache?.enabled && methodUpper === 'GET');
-    const cacheTtl = req?.cacheTtlMs ?? config.cache?.ttlMs ?? 60_000;
-    if (cacheEnabled) {
-      const cacheKey = buildCacheKey(methodUpper, fullUrl, req);
-      const cached = responseCache.get(cacheKey);
-      if (cached) return cached as ApiResponse<T>;
+    // --- Request interceptors ---
+    let processedReq: RestRequestConfig = { ...req, headers: mergedHeaders };
+    if (reqInterceptors.length > 0) {
+      processedReq = await applyInterceptors(reqInterceptors, processedReq);
     }
 
     config.metrics?.onRequestStart?.({
@@ -146,27 +192,29 @@ export function createRestClient(config: HttpConfig) {
       method: methodUpper,
       url: fullUrl,
       timestamp: Date.now(),
-      requestBody: req?.data,
-      requestParams: req?.params,
-      requestHeaders: maybeSanitize(mergedHeaders),
+      requestBody: processedReq?.data,
+      requestParams: processedReq?.params,
+      requestHeaders: maybeSanitize(
+        processedReq?.headers as Record<string, string> | undefined,
+      ),
     });
 
     const startTs = Date.now();
 
     // --- Rate limiting ---
     let release: (() => void) | undefined;
-    if (rateLimiter && !req?.skipRateLimit) {
+    if (rateLimiter && !processedReq?.skipRateLimit) {
       release = await rateLimiter.acquire();
     }
 
     try {
       const response: AxiosResponse<T> = await httpClient.request<T>({
         url: command,
-        ...req,
-        headers: mergedHeaders,
+        ...processedReq,
+        headers: processedReq?.headers,
       });
 
-      const payload: ApiResponse<T> = {
+      let payload: ApiResponse<T> = {
         data: response.data,
         status: response.status,
         statusText: response.statusText,
@@ -179,17 +227,21 @@ export function createRestClient(config: HttpConfig) {
       let responseBytes: number | undefined;
       const headers = response.headers as Record<string, string>;
       const contentLengthHeader =
-        headers['content-length'] || headers['Content-Length'];
-      const parsedLength = contentLengthHeader ? Number(contentLengthHeader) : NaN;
+        headers["content-length"] || headers["Content-Length"];
+      const parsedLength = contentLengthHeader
+        ? Number(contentLengthHeader)
+        : NaN;
       if (Number.isFinite(parsedLength) && parsedLength !== 0) {
         responseBytes = parsedLength;
       } else {
         try {
           const raw = response.data;
-          if (typeof raw === 'string') {
+          if (typeof raw === "string") {
             responseBytes = new TextEncoder().encode(raw).length;
           } else if (raw !== undefined) {
-            responseBytes = new TextEncoder().encode(JSON.stringify(raw)).length;
+            responseBytes = new TextEncoder().encode(
+              JSON.stringify(raw),
+            ).length;
           }
         } catch {
           // ignore sizing errors
@@ -202,12 +254,29 @@ export function createRestClient(config: HttpConfig) {
         status: response.status,
         bytes: responseBytes,
         responseBody: response.data,
-        responseHeaders: maybeSanitize(response.headers as Record<string, string>),
+        responseHeaders: maybeSanitize(
+          response.headers as Record<string, string>,
+        ),
       });
 
+      // --- Response interceptors ---
+      if (resInterceptors.length > 0) {
+        payload = await applyInterceptors(
+          resInterceptors as Array<
+            (v: ApiResponse<T>) => ApiResponse<T> | Promise<ApiResponse<T>>
+          >,
+          payload,
+        );
+      }
+
       // --- Сохранение в кэш ---
+      const cacheEnabled =
+        processedReq?.useCache ??
+        (config.cache?.enabled && methodUpper === "GET");
       if (cacheEnabled) {
-        const cacheKey = buildCacheKey(methodUpper, fullUrl, req);
+        const cacheTtl =
+          processedReq?.cacheTtlMs ?? config.cache?.ttlMs ?? 60_000;
+        const cacheKey = buildCacheKey(methodUpper, fullUrl, processedReq);
         responseCache.set(cacheKey, payload, cacheTtl);
       }
 
@@ -224,18 +293,90 @@ export function createRestClient(config: HttpConfig) {
       ) {
         await config.auth.onUnauthorized?.();
         // Повторяем с флагом _retried=true — второй 401 уже не будет перехвачен
-        return request<T>(command, req, true);
+        return _executeRequest<T>(command, req, true);
+      }
+
+      let apiError = toApiError(error);
+
+      // --- Error interceptors ---
+      if (errInterceptors.length > 0) {
+        apiError = await applyInterceptors(errInterceptors, apiError);
       }
 
       config.metrics?.onRequestEnd?.({
         id: reqId,
         durationMs: duration,
-        error: toApiError(error),
+        error: apiError,
       });
+
+      // --- Global onError handler ---
+      if (config.onError) {
+        await config.onError(apiError, processedReq ?? {});
+      }
+
       throw error;
     } finally {
       release?.();
     }
+  }
+
+  // ── Основная функция запроса (с кэшем и dedup) ──────────────────────────────
+  async function request<T = unknown>(
+    command: string,
+    req?: RestRequestConfig,
+    _retried = false,
+  ): Promise<ApiResponse<T>> {
+    const methodUpper = (req?.method ?? "GET").toUpperCase();
+    const fullUrl = `${config.baseURL ?? ""}${command}`;
+
+    // --- Проверка кэша ---
+    const cacheEnabled =
+      req?.useCache ?? (config.cache?.enabled && methodUpper === "GET");
+    const cacheTtl = req?.cacheTtlMs ?? config.cache?.ttlMs ?? 60_000;
+    const cacheStrategy = config.cache?.strategy ?? "strict";
+    const staleMs = config.cache?.staleMs ?? 0;
+
+    if (cacheEnabled) {
+      const cacheKey = buildCacheKey(methodUpper, fullUrl, req);
+
+      if (cacheStrategy === "stale-while-revalidate") {
+        const staleResult = responseCache.getStale(cacheKey, staleMs);
+        if (staleResult) {
+          if (staleResult.isStale) {
+            // Фоновое обновление без блокирования
+            _executeRequest<T>(command, req, _retried)
+              .then((fresh) => responseCache.set(cacheKey, fresh, cacheTtl))
+              .catch(() => {
+                /* ignore background revalidation errors */
+              });
+          }
+          return staleResult.value as ApiResponse<T>;
+        }
+      } else {
+        const cached = responseCache.get(cacheKey);
+        if (cached) return cached as ApiResponse<T>;
+      }
+    }
+
+    // --- Request deduplication (только для GET без кэша) ---
+    const shouldDedup =
+      (config.deduplicateRequests ?? false) &&
+      methodUpper === "GET" &&
+      !req?.skipRateLimit;
+
+    if (shouldDedup) {
+      const dedupKey = buildCacheKey(methodUpper, fullUrl, req);
+      const existing = inFlightRequests.get(dedupKey);
+      if (existing) return existing as Promise<ApiResponse<T>>;
+
+      const promise = _executeRequest<T>(command, req, _retried).finally(() => {
+        inFlightRequests.delete(dedupKey);
+      });
+      inFlightRequests.set(dedupKey, promise);
+      return promise;
+    }
+
+    return _executeRequest<T>(command, req, _retried);
   }
 
   // --- Cancellable requests через AbortController ---
@@ -266,25 +407,37 @@ export function createRestClient(config: HttpConfig) {
 
   return {
     request,
-    get: <T = unknown>(command: string, reqConfig?: Omit<RestRequestConfig, 'method'>) =>
-      request<T>(command, { ...reqConfig, method: 'GET' }),
+    get: <T = unknown>(
+      command: string,
+      reqConfig?: Omit<RestRequestConfig, "method">,
+    ) => request<T>(command, { ...reqConfig, method: "GET" }),
     post: <T = unknown>(
       command: string,
       data?: unknown,
-      reqConfig?: Omit<RestRequestConfig, 'method' | 'data'>,
-    ) => request<T>(command, { ...reqConfig, method: 'POST', data }),
+      reqConfig?: Omit<RestRequestConfig, "method" | "data">,
+    ) => request<T>(command, { ...reqConfig, method: "POST", data }),
     put: <T = unknown>(
       command: string,
       data?: unknown,
-      reqConfig?: Omit<RestRequestConfig, 'method' | 'data'>,
-    ) => request<T>(command, { ...reqConfig, method: 'PUT', data }),
+      reqConfig?: Omit<RestRequestConfig, "method" | "data">,
+    ) => request<T>(command, { ...reqConfig, method: "PUT", data }),
     patch: <T = unknown>(
       command: string,
       data?: unknown,
-      reqConfig?: Omit<RestRequestConfig, 'method' | 'data'>,
-    ) => request<T>(command, { ...reqConfig, method: 'PATCH', data }),
-    delete: <T = unknown>(command: string, reqConfig?: Omit<RestRequestConfig, 'method'>) =>
-      request<T>(command, { ...reqConfig, method: 'DELETE' }),
+      reqConfig?: Omit<RestRequestConfig, "method" | "data">,
+    ) => request<T>(command, { ...reqConfig, method: "PATCH", data }),
+    delete: <T = unknown>(
+      command: string,
+      reqConfig?: Omit<RestRequestConfig, "method">,
+    ) => request<T>(command, { ...reqConfig, method: "DELETE" }),
+    head: <T = unknown>(
+      command: string,
+      reqConfig?: Omit<RestRequestConfig, "method">,
+    ) => request<T>(command, { ...reqConfig, method: "HEAD" }),
+    options: <T = unknown>(
+      command: string,
+      reqConfig?: Omit<RestRequestConfig, "method">,
+    ) => request<T>(command, { ...reqConfig, method: "OPTIONS" }),
     cancellableRequest,
     cancelRequest,
     /** Очистить кэш ответов данного клиента */
@@ -305,6 +458,9 @@ export function getRestClient(config: HttpConfig): RestClient {
     sensitiveHeaders: config.sensitiveHeaders ?? [],
     metrics: !!config.metrics,
     auth: !!config.auth,
+    deduplicateRequests: config.deduplicateRequests ?? false,
+    interceptors: !!config.interceptors,
+    onError: !!config.onError,
   });
 
   const cachedClient = restClientCache.get(key);
