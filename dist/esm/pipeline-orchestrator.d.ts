@@ -1,4 +1,4 @@
-import type { PipelineConfig, PipelineResult, PipelineStepResult, PipelineStepStatus, PipelineStepEvent, PipelineStepEventHandler, PipelineExportedState } from './types';
+import type { PipelineConfig, PipelineResult, PipelineStepResult, PipelineStepStatus, PipelineStepEvent, PipelineStepEventHandler, PipelineExportedState } from "./types";
 export type { PipelineStepEvent, PipelineStepEventHandler };
 export declare class PipelineOrchestrator {
     private progress;
@@ -22,10 +22,16 @@ export declare class PipelineOrchestrator {
     private _resumePromise;
     private _resumeResolve;
     private config;
+    /** Индекс последнего упавшего шага (для pipelineRetry с retryFrom: 'failed-step') */
+    private _lastFailedIndex;
     constructor(params: {
         config: PipelineConfig;
-        httpConfig?: import('./types').HttpConfig;
+        httpConfig?: import("./types").HttpConfig;
         sharedData?: Record<string, unknown>;
+        /**
+         * @deprecated Используйте params.config.options.autoReset.
+         * Для обратной совместимости этот параметр также поддерживается.
+         */
         options?: {
             autoReset?: boolean;
         };
@@ -41,7 +47,7 @@ export declare class PipelineOrchestrator {
     onStepStart(handler: PipelineStepEventHandler): () => void;
     onStepFinish(handler: PipelineStepEventHandler): () => void;
     onStepError(handler: PipelineStepEventHandler): () => void;
-    subscribeProgress(listener: (progress: import('./types').PipelineProgress) => void): () => void;
+    subscribeProgress(listener: (progress: import("./types").PipelineProgress) => void): () => void;
     subscribeStepProgress(stepKey: string, listener: (status: PipelineStepStatus) => void): () => void;
     getProgress(): {
         currentStage: number;
@@ -60,6 +66,8 @@ export declare class PipelineOrchestrator {
         data?: any;
         timestamp: Date;
     }[];
+    /** Возвращает синхронный снимок результатов всех шагов. */
+    getStageResults(): Record<string, PipelineStepResult>;
     clearStageResults(): void;
     /** Экспортировать снимок состояния pipeline (для сохранения и восстановления) */
     exportState(): PipelineExportedState;
@@ -79,6 +87,9 @@ export declare class PipelineOrchestrator {
      * Единственная точка реализации логики шага — используется и в run(), и в rerunStep().
      */
     private executeStage;
+    private executeSubPipeline;
+    private findStageByKey;
+    private _runOnce;
     run(onStepPause?: (stepIndex: number, stepResult: unknown, stageResults: Record<string, PipelineStepResult>) => Promise<unknown> | unknown, externalSignal?: AbortSignal): Promise<PipelineResult>;
     /**
      * Повторно выполнить только один шаг pipeline (без полного рестарта).

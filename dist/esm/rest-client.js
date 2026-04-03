@@ -1,12 +1,13 @@
-import axios from 'axios';
-import { TtlCache } from './cache';
-import { RateLimiter } from './rate-limiter';
+import axios from "axios";
+import { TtlCache } from "./cache";
+import { RateLimiter } from "./rate-limiter";
+import { DEFAULT_SENSITIVE_HEADERS } from "./types";
 export function toApiError(error) {
     var _a;
     if (axios.isCancel(error)) {
         return {
-            message: 'Request was cancelled',
-            code: 'REQUEST_CANCELLED',
+            message: "Request was cancelled",
+            code: "REQUEST_CANCELLED",
         };
     }
     if (axios.isAxiosError(error)) {
@@ -24,17 +25,57 @@ export function toApiError(error) {
         };
     }
     return {
-        message: 'An unknown error occurred',
+        message: "An unknown error occurred",
         timestamp: new Date(),
     };
 }
+// ─────────────────────────────────────────────────────────────────────────────
+// Log sanitization
+// ─────────────────────────────────────────────────────────────────────────────
+/**
+ * Маскирует чувствительные заголовки в объекте перед передачей в метрики.
+ * Не мутирует оригинальный объект.
+ */
+export function sanitizeHeadersMap(headers, extraSensitive = []) {
+    if (!headers)
+        return headers;
+    const blocked = new Set([
+        ...DEFAULT_SENSITIVE_HEADERS.map((h) => h.toLowerCase()),
+        ...extraSensitive.map((h) => h.toLowerCase()),
+    ]);
+    return Object.fromEntries(Object.entries(headers).map(([k, v]) => blocked.has(k.toLowerCase()) ? [k, "REDACTED"] : [k, v]));
+}
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+/** Нормализовать значение в массив */
+function toArray(value) {
+    if (!value)
+        return [];
+    return Array.isArray(value) ? value : [value];
+}
+/** Применить цепочку перехватчиков к значению */
+async function applyInterceptors(interceptors, value) {
+    let result = value;
+    for (const interceptor of interceptors) {
+        result = await interceptor(result);
+    }
+    return result;
+}
+// ─────────────────────────────────────────────────────────────────────────────
+// Client cache
+// ─────────────────────────────────────────────────────────────────────────────
 const MAX_CLIENT_CACHE_SIZE = 100;
 const restClientCache = new Map();
 /** Очистить кэш клиентов (полезно в тестах или при смене конфигурации) */
 export function clearRestClientCache() {
     restClientCache.clear();
 }
+// ─────────────────────────────────────────────────────────────────────────────
+// createRestClient
+// ─────────────────────────────────────────────────────────────────────────────
 export function createRestClient(config) {
+    var _a, _b, _c, _d, _e;
     const httpClient = axios.create({
         baseURL: config.baseURL,
         timeout: config.timeout,
@@ -44,7 +85,23 @@ export function createRestClient(config) {
     // --- Кэш ответов ---
     const responseCache = new TtlCache(1000);
     // --- Rate limiter ---
-    const rateLimiter = config.rateLimit ? new RateLimiter(config.rateLimit) : null;
+    const rateLimiter = config.rateLimit
+        ? new RateLimiter(config.rateLimit)
+        : null;
+    // --- Sanitization helpers ---
+    const shouldSanitize = (_a = config.sanitizeHeaders) !== null && _a !== void 0 ? _a : false;
+    const extraSensitive = (_b = config.sensitiveHeaders) !== null && _b !== void 0 ? _b : [];
+    // --- Interceptors ---
+    const reqInterceptors = toArray((_c = config.interceptors) === null || _c === void 0 ? void 0 : _c.request);
+    const resInterceptors = toArray((_d = config.interceptors) === null || _d === void 0 ? void 0 : _d.response);
+    const errInterceptors = toArray((_e = config.interceptors) === null || _e === void 0 ? void 0 : _e.error);
+    // --- In-flight deduplication map ---
+    const inFlightRequests = new Map();
+    function maybeSanitize(headers) {
+        return shouldSanitize
+            ? sanitizeHeadersMap(headers, extraSensitive)
+            : headers;
+    }
     function buildCacheKey(method, url, req) {
         return JSON.stringify({
             method: method.toUpperCase(),
@@ -53,41 +110,50 @@ export function createRestClient(config) {
             cacheKey: req === null || req === void 0 ? void 0 : req.cacheKey,
         });
     }
-    async function request(command, req) {
-        var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p;
+    // ── Внутренняя логика одного HTTP-запроса (без dedup-обёртки) ──────────────
+    // _retried — внутренний флаг, предотвращает бесконечную петлю при 401-retry
+    async function _executeRequest(command, req, _retried = false) {
+        var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s;
         const reqId = (_a = req === null || req === void 0 ? void 0 : req.requestId) !== null && _a !== void 0 ? _a : Math.random().toString(36).slice(2);
-        const methodUpper = ((_b = req === null || req === void 0 ? void 0 : req.method) !== null && _b !== void 0 ? _b : 'GET').toUpperCase();
-        const fullUrl = `${(_c = config.baseURL) !== null && _c !== void 0 ? _c : ''}${command}`;
-        // --- Проверка кэша ---
-        const cacheEnabled = (_d = req === null || req === void 0 ? void 0 : req.useCache) !== null && _d !== void 0 ? _d : (((_e = config.cache) === null || _e === void 0 ? void 0 : _e.enabled) && methodUpper === 'GET');
-        const cacheTtl = (_h = (_f = req === null || req === void 0 ? void 0 : req.cacheTtlMs) !== null && _f !== void 0 ? _f : (_g = config.cache) === null || _g === void 0 ? void 0 : _g.ttlMs) !== null && _h !== void 0 ? _h : 60000;
-        if (cacheEnabled) {
-            const cacheKey = buildCacheKey(methodUpper, fullUrl, req);
-            const cached = responseCache.get(cacheKey);
-            if (cached)
-                return cached;
+        const methodUpper = ((_b = req === null || req === void 0 ? void 0 : req.method) !== null && _b !== void 0 ? _b : "GET").toUpperCase();
+        const fullUrl = `${(_c = config.baseURL) !== null && _c !== void 0 ? _c : ""}${command}`;
+        // --- Auth: получаем токен и инжектируем заголовок ---
+        let authHeaders = {};
+        if (config.auth) {
+            const token = await config.auth.getToken();
+            authHeaders = { Authorization: `Bearer ${token}` };
         }
-        (_k = (_j = config.metrics) === null || _j === void 0 ? void 0 : _j.onRequestStart) === null || _k === void 0 ? void 0 : _k.call(_j, {
+        const mergedHeaders = {
+            ...req === null || req === void 0 ? void 0 : req.headers,
+            ...authHeaders,
+        };
+        // --- Request interceptors ---
+        let processedReq = { ...req, headers: mergedHeaders };
+        if (reqInterceptors.length > 0) {
+            processedReq = await applyInterceptors(reqInterceptors, processedReq);
+        }
+        (_e = (_d = config.metrics) === null || _d === void 0 ? void 0 : _d.onRequestStart) === null || _e === void 0 ? void 0 : _e.call(_d, {
             id: reqId,
             method: methodUpper,
             url: fullUrl,
             timestamp: Date.now(),
-            requestBody: req === null || req === void 0 ? void 0 : req.data,
-            requestParams: req === null || req === void 0 ? void 0 : req.params,
-            requestHeaders: req === null || req === void 0 ? void 0 : req.headers,
+            requestBody: processedReq === null || processedReq === void 0 ? void 0 : processedReq.data,
+            requestParams: processedReq === null || processedReq === void 0 ? void 0 : processedReq.params,
+            requestHeaders: maybeSanitize(processedReq === null || processedReq === void 0 ? void 0 : processedReq.headers),
         });
         const startTs = Date.now();
         // --- Rate limiting ---
         let release;
-        if (rateLimiter && !(req === null || req === void 0 ? void 0 : req.skipRateLimit)) {
+        if (rateLimiter && !(processedReq === null || processedReq === void 0 ? void 0 : processedReq.skipRateLimit)) {
             release = await rateLimiter.acquire();
         }
         try {
             const response = await httpClient.request({
                 url: command,
-                ...req,
+                ...processedReq,
+                headers: processedReq === null || processedReq === void 0 ? void 0 : processedReq.headers,
             });
-            const payload = {
+            let payload = {
                 data: response.data,
                 status: response.status,
                 statusText: response.statusText,
@@ -97,15 +163,17 @@ export function createRestClient(config) {
             // --- Вычисление размера ответа ---
             let responseBytes;
             const headers = response.headers;
-            const contentLengthHeader = headers['content-length'] || headers['Content-Length'];
-            const parsedLength = contentLengthHeader ? Number(contentLengthHeader) : NaN;
+            const contentLengthHeader = headers["content-length"] || headers["Content-Length"];
+            const parsedLength = contentLengthHeader
+                ? Number(contentLengthHeader)
+                : NaN;
             if (Number.isFinite(parsedLength) && parsedLength !== 0) {
                 responseBytes = parsedLength;
             }
             else {
                 try {
                     const raw = response.data;
-                    if (typeof raw === 'string') {
+                    if (typeof raw === "string") {
                         responseBytes = new TextEncoder().encode(raw).length;
                     }
                     else if (raw !== undefined) {
@@ -116,35 +184,108 @@ export function createRestClient(config) {
                     // ignore sizing errors
                 }
             }
-            (_m = (_l = config.metrics) === null || _l === void 0 ? void 0 : _l.onRequestEnd) === null || _m === void 0 ? void 0 : _m.call(_l, {
+            (_g = (_f = config.metrics) === null || _f === void 0 ? void 0 : _f.onRequestEnd) === null || _g === void 0 ? void 0 : _g.call(_f, {
                 id: reqId,
                 durationMs: duration,
                 status: response.status,
                 bytes: responseBytes,
                 responseBody: response.data,
-                responseHeaders: response.headers,
+                responseHeaders: maybeSanitize(response.headers),
             });
+            // --- Response interceptors ---
+            if (resInterceptors.length > 0) {
+                payload = await applyInterceptors(resInterceptors, payload);
+            }
             // --- Сохранение в кэш ---
+            const cacheEnabled = (_h = processedReq === null || processedReq === void 0 ? void 0 : processedReq.useCache) !== null && _h !== void 0 ? _h : (((_j = config.cache) === null || _j === void 0 ? void 0 : _j.enabled) && methodUpper === "GET");
             if (cacheEnabled) {
-                const cacheKey = buildCacheKey(methodUpper, fullUrl, req);
+                const cacheTtl = (_m = (_k = processedReq === null || processedReq === void 0 ? void 0 : processedReq.cacheTtlMs) !== null && _k !== void 0 ? _k : (_l = config.cache) === null || _l === void 0 ? void 0 : _l.ttlMs) !== null && _m !== void 0 ? _m : 60000;
+                const cacheKey = buildCacheKey(methodUpper, fullUrl, processedReq);
                 responseCache.set(cacheKey, payload, cacheTtl);
             }
             return payload;
         }
         catch (error) {
             const duration = Date.now() - startTs;
-            (_p = (_o = config.metrics) === null || _o === void 0 ? void 0 : _o.onRequestEnd) === null || _p === void 0 ? void 0 : _p.call(_o, {
+            // --- Auth: 401 → onUnauthorized() → одна попытка повтора ---
+            if (config.auth &&
+                !_retried &&
+                axios.isAxiosError(error) &&
+                ((_o = error.response) === null || _o === void 0 ? void 0 : _o.status) === 401) {
+                await ((_q = (_p = config.auth).onUnauthorized) === null || _q === void 0 ? void 0 : _q.call(_p));
+                // Повторяем с флагом _retried=true — второй 401 уже не будет перехвачен
+                return _executeRequest(command, req, true);
+            }
+            let apiError = toApiError(error);
+            // --- Error interceptors ---
+            if (errInterceptors.length > 0) {
+                apiError = await applyInterceptors(errInterceptors, apiError);
+            }
+            (_s = (_r = config.metrics) === null || _r === void 0 ? void 0 : _r.onRequestEnd) === null || _s === void 0 ? void 0 : _s.call(_r, {
                 id: reqId,
                 durationMs: duration,
-                error: toApiError(error),
+                error: apiError,
             });
+            // --- Global onError handler ---
+            if (config.onError) {
+                await config.onError(apiError, processedReq !== null && processedReq !== void 0 ? processedReq : {});
+            }
             throw error;
         }
         finally {
             release === null || release === void 0 ? void 0 : release();
         }
     }
-    // --- Cancellable requests через AbortController (не CancelToken) ---
+    // ── Основная функция запроса (с кэшем и dedup) ──────────────────────────────
+    async function request(command, req, _retried = false) {
+        var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m;
+        const methodUpper = ((_a = req === null || req === void 0 ? void 0 : req.method) !== null && _a !== void 0 ? _a : "GET").toUpperCase();
+        const fullUrl = `${(_b = config.baseURL) !== null && _b !== void 0 ? _b : ""}${command}`;
+        // --- Проверка кэша ---
+        const cacheEnabled = (_c = req === null || req === void 0 ? void 0 : req.useCache) !== null && _c !== void 0 ? _c : (((_d = config.cache) === null || _d === void 0 ? void 0 : _d.enabled) && methodUpper === "GET");
+        const cacheTtl = (_g = (_e = req === null || req === void 0 ? void 0 : req.cacheTtlMs) !== null && _e !== void 0 ? _e : (_f = config.cache) === null || _f === void 0 ? void 0 : _f.ttlMs) !== null && _g !== void 0 ? _g : 60000;
+        const cacheStrategy = (_j = (_h = config.cache) === null || _h === void 0 ? void 0 : _h.strategy) !== null && _j !== void 0 ? _j : "strict";
+        const staleMs = (_l = (_k = config.cache) === null || _k === void 0 ? void 0 : _k.staleMs) !== null && _l !== void 0 ? _l : 0;
+        if (cacheEnabled) {
+            const cacheKey = buildCacheKey(methodUpper, fullUrl, req);
+            if (cacheStrategy === "stale-while-revalidate") {
+                const staleResult = responseCache.getStale(cacheKey, staleMs);
+                if (staleResult) {
+                    if (staleResult.isStale) {
+                        // Фоновое обновление без блокирования
+                        _executeRequest(command, req, _retried)
+                            .then((fresh) => responseCache.set(cacheKey, fresh, cacheTtl))
+                            .catch(() => {
+                            /* ignore background revalidation errors */
+                        });
+                    }
+                    return staleResult.value;
+                }
+            }
+            else {
+                const cached = responseCache.get(cacheKey);
+                if (cached)
+                    return cached;
+            }
+        }
+        // --- Request deduplication (только для GET без кэша) ---
+        const shouldDedup = ((_m = config.deduplicateRequests) !== null && _m !== void 0 ? _m : false) &&
+            methodUpper === "GET" &&
+            !(req === null || req === void 0 ? void 0 : req.skipRateLimit);
+        if (shouldDedup) {
+            const dedupKey = buildCacheKey(methodUpper, fullUrl, req);
+            const existing = inFlightRequests.get(dedupKey);
+            if (existing)
+                return existing;
+            const promise = _executeRequest(command, req, _retried).finally(() => {
+                inFlightRequests.delete(dedupKey);
+            });
+            inFlightRequests.set(dedupKey, promise);
+            return promise;
+        }
+        return _executeRequest(command, req, _retried);
+    }
+    // --- Cancellable requests через AbortController ---
     const abortControllers = new Map();
     function cancelRequest(key) {
         var _a;
@@ -167,11 +308,13 @@ export function createRestClient(config) {
     }
     return {
         request,
-        get: (command, reqConfig) => request(command, { ...reqConfig, method: 'GET' }),
-        post: (command, data, reqConfig) => request(command, { ...reqConfig, method: 'POST', data }),
-        put: (command, data, reqConfig) => request(command, { ...reqConfig, method: 'PUT', data }),
-        patch: (command, data, reqConfig) => request(command, { ...reqConfig, method: 'PATCH', data }),
-        delete: (command, reqConfig) => request(command, { ...reqConfig, method: 'DELETE' }),
+        get: (command, reqConfig) => request(command, { ...reqConfig, method: "GET" }),
+        post: (command, data, reqConfig) => request(command, { ...reqConfig, method: "POST", data }),
+        put: (command, data, reqConfig) => request(command, { ...reqConfig, method: "PUT", data }),
+        patch: (command, data, reqConfig) => request(command, { ...reqConfig, method: "PATCH", data }),
+        delete: (command, reqConfig) => request(command, { ...reqConfig, method: "DELETE" }),
+        head: (command, reqConfig) => request(command, { ...reqConfig, method: "HEAD" }),
+        options: (command, reqConfig) => request(command, { ...reqConfig, method: "OPTIONS" }),
         cancellableRequest,
         cancelRequest,
         /** Очистить кэш ответов данного клиента */
@@ -179,7 +322,7 @@ export function createRestClient(config) {
     };
 }
 export function getRestClient(config) {
-    var _a, _b, _c, _d;
+    var _a, _b, _c, _d, _e, _f, _g;
     const key = JSON.stringify({
         baseURL: config.baseURL,
         timeout: config.timeout,
@@ -188,7 +331,13 @@ export function getRestClient(config) {
         retry: (_b = config.retry) !== null && _b !== void 0 ? _b : {},
         cache: (_c = config.cache) !== null && _c !== void 0 ? _c : {},
         rateLimit: (_d = config.rateLimit) !== null && _d !== void 0 ? _d : {},
+        sanitizeHeaders: (_e = config.sanitizeHeaders) !== null && _e !== void 0 ? _e : false,
+        sensitiveHeaders: (_f = config.sensitiveHeaders) !== null && _f !== void 0 ? _f : [],
         metrics: !!config.metrics,
+        auth: !!config.auth,
+        deduplicateRequests: (_g = config.deduplicateRequests) !== null && _g !== void 0 ? _g : false,
+        interceptors: !!config.interceptors,
+        onError: !!config.onError,
     });
     const cachedClient = restClientCache.get(key);
     if (cachedClient)

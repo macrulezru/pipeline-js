@@ -8,6 +8,8 @@ export declare class RequestExecutor {
      * Выполнение одного запроса с поддержкой:
      * - retry с задержкой, экспоненциальным backoff и jitter
      * - фильтрацией retry по HTTP-статусу (retriableStatus)
+     * - разбором заголовка Retry-After (приоритет над backoff-задержкой)
+     * - потолком maxRetryAfterMs для Retry-After
      * - таймаута через AbortController (реально отменяет HTTP-запрос)
      * - внешнего AbortSignal (от orchestrator.abort())
      */
