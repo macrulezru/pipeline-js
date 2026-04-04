@@ -9,3 +9,4 @@ export {
   usePipelineLogsVue,
   useRerunPipelineStepVue,
 } from "./usePipelineStepEvents-vue";
+export { usePipelineStageResultVue } from "./usePipelineStageResult-vue";

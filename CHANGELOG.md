@@ -1,5 +1,51 @@
 # Changelog
 
+## [1.3.7] - 2026-04-04
+
+### Added
+
+#### Pipeline Orchestrator
+
+- **Pipeline metrics** — `PipelineConfig.metrics` with three callbacks:
+  - `onPipelineStart({ timestamp })` — fires at the beginning of `run()`
+  - `onPipelineEnd({ durationMs, success, stageResults })` — fires when `run()` completes
+  - `onStepDuration({ stepKey, durationMs, status })` — fires after every executed step
+- **Plugin system** — `options.plugins` accepts an array of `PipelinePlugin` objects. Each plugin receives the orchestrator instance in `install(orchestrator)` and can subscribe to events, add middleware hooks, etc. Returning a function from `install()` registers it as a cleanup callback.
+- **`destroy()`** — new public method that invokes cleanup functions from all installed plugins.
+- **Persist adapter** — `options.persistAdapter` accepts a `PipelineStateAdapter` object with `save` / `load` methods. When set: state is automatically loaded at the start of `run()` (via `importState`) and saved after each successfully completed step.
+- **Stream stages** — new `StreamStageConfig` element type for `PipelineItem`. The `stream` function returns an `AsyncIterable<T>`; the orchestrator iterates it and collects chunks into an array (the stage result). The optional `onChunk(chunk, sharedData)` callback fires for each chunk in real time. Stream stages honour `abort()`, `continueOnError`, and emit standard step events.
+- **Generic step keys** — `PipelineOrchestrator<TKeys extends string = string>` now accepts a generic type parameter for typed auto-complete in `on()`, `rerunStep()`, and `subscribeStepProgress()`.
+
+#### DX utilities
+
+- **`createPipeline(stages, options?)`** — factory function that creates a `PipelineOrchestrator` without the nested `{ config: { stages } }` boilerplate.
+- **`pipe()`** — fluent builder API. Methods: `.step()`, `.parallel()`, `.subPipeline()`, `.stream()`, `.build(options?)`, `.toConfig(options?)`.
+- **`validatePipelineConfig(config, context?)`** — validates a `PipelineConfig` before runtime. Checks for duplicate keys, empty keys, empty `stages` array, invalid field types, and recursively validates nested sub-pipelines. Returns `{ valid: boolean; errors: string[] }`.
+- **`getStageResults()`** — synchronous snapshot of all stage results (no subscription needed).
+
+#### Vue / React hooks
+
+- **`usePipelineStageResultVue(orchestrator, stepKey)`** — reactive `Ref<PipelineStepResult | null>` for a single step.
+- **`usePipelineStageResultReact(orchestrator, stepKey)`** — state hook for a single step, updates on every `stageResults` change.
+
+#### RestClient
+
+- **`HttpAdapter`** — new `adapter` field in `HttpConfig`. When provided, replaces the built-in axios client with a custom implementation (e.g. native `fetch`). All other features (auth, interceptors, retry, sanitization, metrics) continue to work on top of the adapter.
+
+#### Types
+
+- `PipelineMetrics` interface
+- `PipelinePlugin` type
+- `PipelineStateAdapter` type
+- `StreamStageConfig<T>` type; updated `PipelineItem` union to include it
+- `HttpAdapter` type
+- `PipelineLogEventType` union — exhaustive list of all log event type strings
+- Extended `PipelineConfig` with `metrics?`
+- Extended `PipelineOptions` with `persistAdapter?` and `plugins?`
+- Extended `HttpConfig` with `adapter?`
+
+---
+
 ## [1.3.6] - 2026-04-03
 
 ### Added

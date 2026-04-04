@@ -1,6 +1,16 @@
 import type { PipelineConfig, PipelineResult, PipelineStepResult, PipelineStepStatus, PipelineStepEvent, PipelineStepEventHandler, PipelineExportedState } from "./types";
 export type { PipelineStepEvent, PipelineStepEventHandler };
-export declare class PipelineOrchestrator {
+/**
+ * Оркестратор pipeline. Управляет последовательным и параллельным выполнением шагов,
+ * паузой/возобновлением, отменой, событиями, метриками и персистентным состоянием.
+ *
+ * @template TKeys — строковый union-тип ключей шагов для типобезопасных событий.
+ *   По умолчанию `string` для обратной совместимости.
+ * @example
+ * const orchestrator = new PipelineOrchestrator<"fetchUser" | "processData">({ ... });
+ * orchestrator.on("step:fetchUser:success", (event) => { ... }); // autocomplete!
+ */
+export declare class PipelineOrchestrator<TKeys extends string = string> {
     private progress;
     private errorHandler;
     private executor;
@@ -24,6 +34,8 @@ export declare class PipelineOrchestrator {
     private config;
     /** Индекс последнего упавшего шага (для pipelineRetry с retryFrom: 'failed-step') */
     private _lastFailedIndex;
+    /** Cleanup-функции плагинов */
+    private _pluginCleanups;
     constructor(params: {
         config: PipelineConfig;
         httpConfig?: import("./types").HttpConfig;
@@ -36,6 +48,10 @@ export declare class PipelineOrchestrator {
             autoReset?: boolean;
         };
     });
+    /**
+     * Освободить ресурсы плагинов. Вызывать при уничтожении orchestrator.
+     */
+    destroy(): void;
     /** Приостановить pipeline после завершения текущего шага */
     pause(): void;
     /** Возобновить выполнение pipeline */
@@ -43,12 +59,12 @@ export declare class PipelineOrchestrator {
     /** Проверить, приостановлен ли pipeline */
     isPaused(): boolean;
     subscribeStageResults(listener: (results: Record<string, PipelineStepResult>) => void): () => void;
-    on(event: string, handler: (...args: any[]) => void | Promise<void>): () => void;
+    on(event: `step:${TKeys}:${"start" | "success" | "error" | "progress" | "skipped"}` | "log" | (string & {}), handler: (...args: any[]) => void | Promise<void>): () => void;
     onStepStart(handler: PipelineStepEventHandler): () => void;
     onStepFinish(handler: PipelineStepEventHandler): () => void;
     onStepError(handler: PipelineStepEventHandler): () => void;
     subscribeProgress(listener: (progress: import("./types").PipelineProgress) => void): () => void;
-    subscribeStepProgress(stepKey: string, listener: (status: PipelineStepStatus) => void): () => void;
+    subscribeStepProgress(stepKey: TKeys | (string & {}), listener: (status: PipelineStepStatus) => void): () => void;
     getProgress(): {
         currentStage: number;
         totalStages: number;
@@ -82,11 +98,14 @@ export declare class PipelineOrchestrator {
     private emitStepFinish;
     private emitStepError;
     private emitStepSkipped;
+    /** Получить данные предыдущего (по конфигу) обычного шага */
+    private _getPrevData;
     /**
      * Выполнить один шаг pipeline.
      * Единственная точка реализации логики шага — используется и в run(), и в rerunStep().
      */
     private executeStage;
+    private executeStreamStage;
     private executeSubPipeline;
     private findStageByKey;
     private _runOnce;
@@ -95,7 +114,7 @@ export declare class PipelineOrchestrator {
      * Повторно выполнить только один шаг pipeline (без полного рестарта).
      * Полностью зеркалирует поведение run(): вызывает before/after/condition/middleware.
      */
-    rerunStep(stepKey: string, options?: {
+    rerunStep(stepKey: TKeys | (string & {}), options?: {
         onStepPause?: (stepIndex: number, stepResult: unknown, stageResults: Record<string, PipelineStepResult>) => Promise<unknown> | unknown;
         externalSignal?: AbortSignal;
     }): Promise<PipelineStepResult | undefined>;

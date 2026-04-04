@@ -15,7 +15,7 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
     for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.useRerunPipelineStepVue = exports.usePipelineLogsVue = exports.usePipelineStepEventVue = exports.useRestClientVue = exports.usePipelineRunVue = exports.usePipelineProgressVue = void 0;
+exports.usePipelineStageResultVue = exports.useRerunPipelineStepVue = exports.usePipelineLogsVue = exports.usePipelineStepEventVue = exports.useRestClientVue = exports.usePipelineRunVue = exports.usePipelineProgressVue = void 0;
 __exportStar(require("./index"), exports);
 var usePipelineProgress_vue_1 = require("./usePipelineProgress-vue");
 Object.defineProperty(exports, "usePipelineProgressVue", { enumerable: true, get: function () { return usePipelineProgress_vue_1.usePipelineProgressVue; } });
@@ -27,3 +27,5 @@ var usePipelineStepEvents_vue_1 = require("./usePipelineStepEvents-vue");
 Object.defineProperty(exports, "usePipelineStepEventVue", { enumerable: true, get: function () { return usePipelineStepEvents_vue_1.usePipelineStepEventVue; } });
 Object.defineProperty(exports, "usePipelineLogsVue", { enumerable: true, get: function () { return usePipelineStepEvents_vue_1.usePipelineLogsVue; } });
 Object.defineProperty(exports, "useRerunPipelineStepVue", { enumerable: true, get: function () { return usePipelineStepEvents_vue_1.useRerunPipelineStepVue; } });
+var usePipelineStageResult_vue_1 = require("./usePipelineStageResult-vue");
+Object.defineProperty(exports, "usePipelineStageResultVue", { enumerable: true, get: function () { return usePipelineStageResult_vue_1.usePipelineStageResultVue; } });

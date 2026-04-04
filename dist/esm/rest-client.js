@@ -148,22 +148,34 @@ export function createRestClient(config) {
             release = await rateLimiter.acquire();
         }
         try {
-            const response = await httpClient.request({
-                url: command,
-                ...processedReq,
-                headers: processedReq === null || processedReq === void 0 ? void 0 : processedReq.headers,
-            });
-            let payload = {
-                data: response.data,
-                status: response.status,
-                statusText: response.statusText,
-                headers: response.headers,
-            };
+            let payload;
+            if (config.adapter) {
+                // ── Custom HTTP adapter (fetch, etc.) ───────────────────────────
+                payload = await config.adapter.request({
+                    ...processedReq,
+                    baseURL: config.baseURL,
+                    url: command,
+                });
+            }
+            else {
+                // ── Default: axios ───────────────────────────────────────────────
+                const response = await httpClient.request({
+                    url: command,
+                    ...processedReq,
+                    headers: processedReq === null || processedReq === void 0 ? void 0 : processedReq.headers,
+                });
+                payload = {
+                    data: response.data,
+                    status: response.status,
+                    statusText: response.statusText,
+                    headers: response.headers,
+                };
+            }
             const duration = Date.now() - startTs;
             // --- Вычисление размера ответа ---
             let responseBytes;
-            const headers = response.headers;
-            const contentLengthHeader = headers["content-length"] || headers["Content-Length"];
+            const respHeaders = payload.headers;
+            const contentLengthHeader = respHeaders["content-length"] || respHeaders["Content-Length"];
             const parsedLength = contentLengthHeader
                 ? Number(contentLengthHeader)
                 : NaN;
@@ -172,7 +184,7 @@ export function createRestClient(config) {
             }
             else {
                 try {
-                    const raw = response.data;
+                    const raw = payload.data;
                     if (typeof raw === "string") {
                         responseBytes = new TextEncoder().encode(raw).length;
                     }
@@ -187,10 +199,10 @@ export function createRestClient(config) {
             (_g = (_f = config.metrics) === null || _f === void 0 ? void 0 : _f.onRequestEnd) === null || _g === void 0 ? void 0 : _g.call(_f, {
                 id: reqId,
                 durationMs: duration,
-                status: response.status,
+                status: payload.status,
                 bytes: responseBytes,
-                responseBody: response.data,
-                responseHeaders: maybeSanitize(response.headers),
+                responseBody: payload.data,
+                responseHeaders: maybeSanitize(payload.headers),
             });
             // --- Response interceptors ---
             if (resInterceptors.length > 0) {
@@ -208,10 +220,10 @@ export function createRestClient(config) {
         catch (error) {
             const duration = Date.now() - startTs;
             // --- Auth: 401 → onUnauthorized() → одна попытка повтора ---
-            if (config.auth &&
-                !_retried &&
-                axios.isAxiosError(error) &&
-                ((_o = error.response) === null || _o === void 0 ? void 0 : _o.status) === 401) {
+            const errorStatus = axios.isAxiosError(error)
+                ? (_o = error.response) === null || _o === void 0 ? void 0 : _o.status
+                : error === null || error === void 0 ? void 0 : error.status;
+            if (config.auth && !_retried && errorStatus === 401) {
                 await ((_q = (_p = config.auth).onUnauthorized) === null || _q === void 0 ? void 0 : _q.call(_p));
                 // Повторяем с флагом _retried=true — второй 401 уже не будет перехвачен
                 return _executeRequest(command, req, true);
@@ -338,6 +350,7 @@ export function getRestClient(config) {
         deduplicateRequests: (_g = config.deduplicateRequests) !== null && _g !== void 0 ? _g : false,
         interceptors: !!config.interceptors,
         onError: !!config.onError,
+        adapter: !!config.adapter,
     });
     const cachedClient = restClientCache.get(key);
     if (cachedClient)

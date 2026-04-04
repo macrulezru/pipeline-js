@@ -10,13 +10,27 @@ function isParallelGroup(item) {
 function isSubPipeline(item) {
     return typeof item === "object" && item !== null && "subPipeline" in item;
 }
+/** Проверка: является ли элемент stream-шагом */
+function isStreamStage(item) {
+    return typeof item === "object" && item !== null && "stream" in item;
+}
 /** Небольшой хелпер: sleep */
 function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
+/**
+ * Оркестратор pipeline. Управляет последовательным и параллельным выполнением шагов,
+ * паузой/возобновлением, отменой, событиями, метриками и персистентным состоянием.
+ *
+ * @template TKeys — строковый union-тип ключей шагов для типобезопасных событий.
+ *   По умолчанию `string` для обратной совместимости.
+ * @example
+ * const orchestrator = new PipelineOrchestrator<"fetchUser" | "processData">({ ... });
+ * orchestrator.on("step:fetchUser:success", (event) => { ... }); // autocomplete!
+ */
 export class PipelineOrchestrator {
     constructor(params) {
-        var _a, _b, _c, _d, _e, _f;
+        var _a, _b, _c, _d, _e, _f, _g, _h;
         this.onStepStartHandlers = [];
         this.onStepFinishHandlers = [];
         this.onStepErrorHandlers = [];
@@ -34,6 +48,8 @@ export class PipelineOrchestrator {
         this._resumeResolve = null;
         /** Индекс последнего упавшего шага (для pipelineRetry с retryFrom: 'failed-step') */
         this._lastFailedIndex = -1;
+        /** Cleanup-функции плагинов */
+        this._pluginCleanups = [];
         this.config = params.config;
         // Считаем общее кол-во шагов (параллельная группа = 1 элемент прогресса)
         this.progress = new ProgressTracker(params.config.stages.length);
@@ -43,6 +59,26 @@ export class PipelineOrchestrator {
         // autoReset: сначала из config.options, потом из params.options (обратная совместимость)
         this.autoReset =
             (_f = (_d = (_c = params.config.options) === null || _c === void 0 ? void 0 : _c.autoReset) !== null && _d !== void 0 ? _d : (_e = params.options) === null || _e === void 0 ? void 0 : _e.autoReset) !== null && _f !== void 0 ? _f : false;
+        // Устанавливаем плагины
+        const plugins = (_h = (_g = params.config.options) === null || _g === void 0 ? void 0 : _g.plugins) !== null && _h !== void 0 ? _h : [];
+        for (const plugin of plugins) {
+            const cleanup = plugin.install(this);
+            if (typeof cleanup === "function") {
+                this._pluginCleanups.push(cleanup);
+            }
+        }
+    }
+    /**
+     * Освободить ресурсы плагинов. Вызывать при уничтожении orchestrator.
+     */
+    destroy() {
+        for (const cleanup of this._pluginCleanups) {
+            try {
+                cleanup();
+            }
+            catch { /* ignore */ }
+        }
+        this._pluginCleanups = [];
     }
     // ─────────────────────────────────────────────────────────────────────────
     // Pause / Resume
@@ -149,7 +185,7 @@ export class PipelineOrchestrator {
     }
     /** Восстановить состояние pipeline из ранее сохранённого снимка */
     importState(state) {
-        var _a, _b;
+        var _a, _b, _c;
         this.stageResults = JSON.parse(JSON.stringify(state.stageResults));
         this.logs = state.logs.map((l) => ({
             ...l,
@@ -173,8 +209,13 @@ export class PipelineOrchestrator {
                 if (status)
                     this.progress.updateStage(i, status);
             }
-            else {
+            else if (isStreamStage(item)) {
                 const status = (_b = this.stageResults[item.key]) === null || _b === void 0 ? void 0 : _b.status;
+                if (status)
+                    this.progress.updateStage(i, status);
+            }
+            else {
+                const status = (_c = this.stageResults[item.key]) === null || _c === void 0 ? void 0 : _c.status;
                 if (status)
                     this.progress.updateStage(i, status);
             }
@@ -242,22 +283,24 @@ export class PipelineOrchestrator {
     // ─────────────────────────────────────────────────────────────────────────
     // Ядро: выполнение одного шага
     // ─────────────────────────────────────────────────────────────────────────
+    /** Получить данные предыдущего (по конфигу) обычного шага */
+    _getPrevData(stepIndex) {
+        var _a;
+        const prevItems = this.config.stages
+            .slice(0, stepIndex)
+            .filter((s) => !isParallelGroup(s) && !isSubPipeline(s) && !isStreamStage(s));
+        const prevStage = prevItems[prevItems.length - 1];
+        return prevStage ? (_a = this.stageResults[prevStage.key]) === null || _a === void 0 ? void 0 : _a.data : undefined;
+    }
     /**
      * Выполнить один шаг pipeline.
      * Единственная точка реализации логики шага — используется и в run(), и в rerunStep().
      */
     async executeStage(stepIndex, stage, signal, onStepPause) {
-        var _a, _b, _c, _d;
+        var _a, _b, _c, _d, _e, _f, _g, _h;
         const key = stage.key;
-        // Получаем prev из предыдущего шага (по порядку в конфиге)
-        const prevStageIndex = this.config.stages
-            .slice(0, stepIndex)
-            .map((s) => (isParallelGroup(s) || isSubPipeline(s) ? null : s))
-            .filter(Boolean);
-        const prevStage = prevStageIndex[prevStageIndex.length - 1];
-        const prevData = prevStage
-            ? (_a = this.stageResults[prevStage.key]) === null || _a === void 0 ? void 0 : _a.data
-            : undefined;
+        const prevData = this._getPrevData(stepIndex);
+        const stepStartTs = Date.now();
         // ── Проверка condition ──────────────────────────────────────────────────
         if (typeof stage.condition === "function") {
             const shouldRun = stage.condition({
@@ -297,7 +340,7 @@ export class PipelineOrchestrator {
                 throw new Error("Pipeline aborted");
             }
             // ── Global middleware: beforeEach ──────────────────────────────────
-            if (typeof ((_b = this.config.middleware) === null || _b === void 0 ? void 0 : _b.beforeEach) === "function") {
+            if (typeof ((_a = this.config.middleware) === null || _a === void 0 ? void 0 : _a.beforeEach) === "function") {
                 await this.config.middleware.beforeEach({
                     stage,
                     index: stepIndex,
@@ -378,8 +421,22 @@ export class PipelineOrchestrator {
             this.notifyStageResults();
             this.progress.updateStage(stepIndex, "success");
             await this.emit(`step:${key}:progress`, "success");
+            // ── Метрики: длительность шага ───────────────────────────────────
+            (_c = (_b = this.config.metrics) === null || _b === void 0 ? void 0 : _b.onStepDuration) === null || _c === void 0 ? void 0 : _c.call(_b, {
+                stepKey: key,
+                durationMs: Date.now() - stepStartTs,
+                status: "success",
+            });
+            // ── Persist adapter: сохраняем состояние после шага ──────────────
+            const persistAdapter = (_d = this.config.options) === null || _d === void 0 ? void 0 : _d.persistAdapter;
+            if (persistAdapter) {
+                try {
+                    await persistAdapter.save(this.exportState());
+                }
+                catch { /* не прерываем pipeline из-за ошибки persist */ }
+            }
             // ── Global middleware: afterEach ───────────────────────────────────
-            if (typeof ((_c = this.config.middleware) === null || _c === void 0 ? void 0 : _c.afterEach) === "function") {
+            if (typeof ((_e = this.config.middleware) === null || _e === void 0 ? void 0 : _e.afterEach) === "function") {
                 await this.config.middleware.afterEach({
                     stage,
                     index: stepIndex,
@@ -422,8 +479,14 @@ export class PipelineOrchestrator {
             this.notifyStageResults();
             this.progress.updateStage(stepIndex, "error");
             await this.emit(`step:${key}:progress`, "error");
+            // ── Метрики: длительность шага (error) ───────────────────────────
+            (_g = (_f = this.config.metrics) === null || _f === void 0 ? void 0 : _f.onStepDuration) === null || _g === void 0 ? void 0 : _g.call(_f, {
+                stepKey: key,
+                durationMs: Date.now() - stepStartTs,
+                status: "error",
+            });
             // ── Global middleware: onError ─────────────────────────────────────
-            if (typeof ((_d = this.config.middleware) === null || _d === void 0 ? void 0 : _d.onError) === "function") {
+            if (typeof ((_h = this.config.middleware) === null || _h === void 0 ? void 0 : _h.onError) === "function") {
                 await this.config.middleware.onError({
                     stage,
                     index: stepIndex,
@@ -431,6 +494,98 @@ export class PipelineOrchestrator {
                     sharedData: this.sharedData,
                 });
             }
+            await this.emitStepError({
+                stepIndex,
+                stepKey: key,
+                status: "error",
+                error: apiError,
+                stageResults: { ...this.stageResults },
+            });
+            return errorResult;
+        }
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+    // Ядро: выполнение stream-шага (StreamStageConfig)
+    // ─────────────────────────────────────────────────────────────────────────
+    async executeStreamStage(stepIndex, item, signal) {
+        var _a, _b, _c, _d, _e, _f;
+        const key = item.key;
+        const prevData = this._getPrevData(stepIndex);
+        const stepStartTs = Date.now();
+        this.stageResults[key] = { status: "pending" };
+        this.notifyStageResults();
+        this.progress.updateStage(stepIndex, "loading");
+        await this.emit(`step:${key}:progress`, "loading");
+        await this.emitStepStart({
+            stepIndex,
+            stepKey: key,
+            status: "loading",
+            stageResults: { ...this.stageResults },
+        });
+        this.addLog("log", `stream:${key}:start`, { stepIndex });
+        await this.emit("log", { type: "stream:start", stepKey: key, stepIndex });
+        try {
+            if (signal.aborted)
+                throw new Error("Pipeline aborted");
+            const chunks = [];
+            const asyncIter = item.stream({
+                prev: prevData,
+                allResults: this.stageResults,
+                sharedData: this.sharedData,
+            });
+            for await (const chunk of asyncIter) {
+                if (signal.aborted)
+                    throw new Error("Pipeline aborted");
+                chunks.push(chunk);
+                (_a = item.onChunk) === null || _a === void 0 ? void 0 : _a.call(item, chunk, this.sharedData);
+                // Emit chunk progress event so subscribers can render chunks in real time
+                await this.emit(`step:${key}:progress`, { chunk, chunks: [...chunks] });
+            }
+            const successResult = { status: "success", data: chunks };
+            this.stageResults[key] = successResult;
+            this.notifyStageResults();
+            this.progress.updateStage(stepIndex, "success");
+            await this.emit(`step:${key}:progress`, "success");
+            (_c = (_b = this.config.metrics) === null || _b === void 0 ? void 0 : _b.onStepDuration) === null || _c === void 0 ? void 0 : _c.call(_b, {
+                stepKey: key,
+                durationMs: Date.now() - stepStartTs,
+                status: "success",
+            });
+            const persistAdapter = (_d = this.config.options) === null || _d === void 0 ? void 0 : _d.persistAdapter;
+            if (persistAdapter) {
+                try {
+                    await persistAdapter.save(this.exportState());
+                }
+                catch { /* ignore */ }
+            }
+            this.addLog("log", `stream:${key}:success`, { stepIndex, chunks: chunks.length });
+            await this.emit("log", { type: "stream:success", stepKey: key, stepIndex });
+            await this.emitStepFinish({
+                stepIndex,
+                stepKey: key,
+                status: "success",
+                data: chunks,
+                stageResults: { ...this.stageResults },
+            });
+            if (this._paused && this._resumePromise) {
+                await this._resumePromise;
+            }
+            return successResult;
+        }
+        catch (err) {
+            const apiError = this.errorHandler.handle(err, key);
+            const errorResult = { status: "error", error: apiError };
+            this.stageResults[key] = errorResult;
+            this.notifyStageResults();
+            this.progress.updateStage(stepIndex, "error");
+            await this.emit(`step:${key}:progress`, "error");
+            (_f = (_e = this.config.metrics) === null || _e === void 0 ? void 0 : _e.onStepDuration) === null || _f === void 0 ? void 0 : _f.call(_e, {
+                stepKey: key,
+                durationMs: Date.now() - stepStartTs,
+                status: "error",
+            });
+            this.addLog("error", `stream:${key}:error`, { stepIndex, error: apiError });
+            await this.emit("log", { type: "stream:error", stepKey: key, stepIndex, error: apiError });
             await this.emitStepError({
                 stepIndex,
                 stepKey: key,
@@ -552,7 +707,7 @@ export class PipelineOrchestrator {
     // _runOnce() — одна попытка выполнения pipeline
     // ─────────────────────────────────────────────────────────────────────────
     async _runOnce(onStepPause, signal, startFromIndex = 0) {
-        var _a, _b, _c, _d, _e, _f, _g;
+        var _a, _b, _c, _d, _e, _f, _g, _h;
         const globalContinueOnError = (_b = (_a = this.config.options) === null || _a === void 0 ? void 0 : _a.continueOnError) !== null && _b !== void 0 ? _b : false;
         const maxSteps = (_d = (_c = this.config.options) === null || _c === void 0 ? void 0 : _c.maxSteps) !== null && _d !== void 0 ? _d : this.config.stages.length * 10;
         let success = true;
@@ -574,10 +729,25 @@ export class PipelineOrchestrator {
                 break;
             }
             const item = this.config.stages[i];
+            // ── StreamStage ───────────────────────────────────────────────────
+            if (isStreamStage(item)) {
+                const streamItem = item;
+                const shouldContinue = (_e = streamItem.continueOnError) !== null && _e !== void 0 ? _e : globalContinueOnError;
+                const result = await this.executeStreamStage(i, streamItem, signal);
+                if (result.status === "error") {
+                    if (!shouldContinue) {
+                        success = false;
+                        this._lastFailedIndex = i;
+                        break;
+                    }
+                }
+                i++;
+                continue;
+            }
             // ── SubPipeline ────────────────────────────────────────────────────
             if (isSubPipeline(item)) {
                 const subItem = item;
-                const shouldContinue = (_e = subItem.continueOnError) !== null && _e !== void 0 ? _e : globalContinueOnError;
+                const shouldContinue = (_f = subItem.continueOnError) !== null && _f !== void 0 ? _f : globalContinueOnError;
                 try {
                     const result = await this.executeSubPipeline(i, subItem, signal);
                     if (result.status === "error") {
@@ -623,7 +793,7 @@ export class PipelineOrchestrator {
                 const anyFailed = parallelResults.some((r) => r.status === "error");
                 this.progress.updateStage(i, anyFailed ? "error" : "success");
                 if (anyFailed) {
-                    const shouldContinue = (_f = group.continueOnError) !== null && _f !== void 0 ? _f : globalContinueOnError;
+                    const shouldContinue = (_g = group.continueOnError) !== null && _g !== void 0 ? _g : globalContinueOnError;
                     if (!shouldContinue) {
                         success = false;
                         this._lastFailedIndex = i;
@@ -637,7 +807,7 @@ export class PipelineOrchestrator {
             const stage = item;
             const result = await this.executeStage(i, stage, signal, onStepPause);
             if (result.status === "error") {
-                const shouldContinue = (_g = stage.continueOnError) !== null && _g !== void 0 ? _g : globalContinueOnError;
+                const shouldContinue = (_h = stage.continueOnError) !== null && _h !== void 0 ? _h : globalContinueOnError;
                 if (!shouldContinue) {
                     success = false;
                     this._lastFailedIndex = i;
@@ -678,7 +848,7 @@ export class PipelineOrchestrator {
     // run()
     // ─────────────────────────────────────────────────────────────────────────
     async run(onStepPause, externalSignal) {
-        var _a, _b, _c, _d;
+        var _a, _b, _c, _d, _e, _f, _g, _h, _j;
         if (this.autoReset) {
             this.stageResults = {};
             this.logs = [];
@@ -696,9 +866,22 @@ export class PipelineOrchestrator {
         const maxAttempts = (_b = retryOpts === null || retryOpts === void 0 ? void 0 : retryOpts.attempts) !== null && _b !== void 0 ? _b : 0;
         let attempt = 0;
         let lastResult = { stageResults: {}, success: false };
+        const pipelineStartTs = Date.now();
+        // ── Persist adapter: загружаем сохранённое состояние ─────────────
+        const persistAdapter = (_c = this.config.options) === null || _c === void 0 ? void 0 : _c.persistAdapter;
+        if (persistAdapter) {
+            try {
+                const saved = await persistAdapter.load();
+                if (saved)
+                    this.importState(saved);
+            }
+            catch { /* не прерываем pipeline из-за ошибки persist */ }
+        }
+        // ── Метрики: старт pipeline ───────────────────────────────────────
+        (_e = (_d = this.config.metrics) === null || _d === void 0 ? void 0 : _d.onPipelineStart) === null || _e === void 0 ? void 0 : _e.call(_d, { timestamp: pipelineStartTs });
         // ── Таймаут всего pipeline ─────────────────────────────────────────
         let pipelineTimeoutId;
-        if ((_c = this.config.options) === null || _c === void 0 ? void 0 : _c.pipelineTimeoutMs) {
+        if ((_f = this.config.options) === null || _f === void 0 ? void 0 : _f.pipelineTimeoutMs) {
             pipelineTimeoutId = setTimeout(() => {
                 this.abort();
             }, this.config.options.pipelineTimeoutMs);
@@ -708,7 +891,7 @@ export class PipelineOrchestrator {
                 if (attempt > 0) {
                     if (retryOpts === null || retryOpts === void 0 ? void 0 : retryOpts.delayMs)
                         await sleep(retryOpts.delayMs);
-                    const retryFrom = (_d = retryOpts === null || retryOpts === void 0 ? void 0 : retryOpts.retryFrom) !== null && _d !== void 0 ? _d : "start";
+                    const retryFrom = (_g = retryOpts === null || retryOpts === void 0 ? void 0 : retryOpts.retryFrom) !== null && _g !== void 0 ? _g : "start";
                     const startIndex = retryFrom === "failed-step" && this._lastFailedIndex >= 0
                         ? this._lastFailedIndex
                         : 0;
@@ -745,6 +928,12 @@ export class PipelineOrchestrator {
             if (pipelineTimeoutId !== undefined)
                 clearTimeout(pipelineTimeoutId);
         }
+        // ── Метрики: конец pipeline ───────────────────────────────────────
+        (_j = (_h = this.config.metrics) === null || _h === void 0 ? void 0 : _h.onPipelineEnd) === null || _j === void 0 ? void 0 : _j.call(_h, {
+            durationMs: Date.now() - pipelineStartTs,
+            success: lastResult.success,
+            stageResults: lastResult.stageResults,
+        });
         return lastResult;
     }
     // ─────────────────────────────────────────────────────────────────────────
@@ -826,6 +1015,9 @@ export class PipelineOrchestrator {
                 keys = item.parallel.map((s) => s.key);
             }
             else if (isSubPipeline(item)) {
+                keys = [item.key];
+            }
+            else if (isStreamStage(item)) {
                 keys = [item.key];
             }
             else {

@@ -168,6 +168,12 @@ export interface HttpConfig {
    * По умолчанию: false.
    */
   deduplicateRequests?: boolean;
+  /**
+   * Абстрактный HTTP-адаптер. Заменяет встроенный axios-клиент.
+   * Используйте для edge/serverless окружений (Cloudflare Workers, Deno)
+   * или для передачи нативного fetch.
+   */
+  adapter?: HttpAdapter;
 }
 
 export interface ApiError {
@@ -292,11 +298,12 @@ export type SubPipelineStage = {
   continueOnError?: boolean;
 };
 
-/** Один элемент pipeline — либо обычный шаг, либо группа параллельных шагов, либо вложенный pipeline */
+/** Один элемент pipeline — обычный шаг, параллельная группа, вложенный pipeline или stream-шаг */
 export type PipelineItem =
   | PipelineStageConfig
   | ParallelStageGroup
-  | SubPipelineStage;
+  | SubPipelineStage
+  | StreamStageConfig;
 
 /**
  * Middleware для всего pipeline (глобальные хуки)
@@ -388,6 +395,17 @@ export type PipelineOptions = {
    * По умолчанию: stages.length * 10.
    */
   maxSteps?: number;
+  /**
+   * Адаптер для персистентного хранения состояния pipeline.
+   * При запуске run() автоматически загружает сохранённое состояние,
+   * после каждого шага сохраняет текущее.
+   */
+  persistAdapter?: PipelineStateAdapter;
+  /**
+   * Список плагинов для расширения поведения pipeline.
+   * Каждый плагин вызывается при создании orchestrator.
+   */
+  plugins?: PipelinePlugin[];
 };
 
 /**
@@ -399,6 +417,8 @@ export type PipelineConfig = {
   middleware?: PipelineMiddleware;
   /** Глобальные опции поведения pipeline */
   options?: PipelineOptions;
+  /** Коллбэки для наблюдения за выполнением pipeline */
+  metrics?: PipelineMetrics;
 };
 
 /**
@@ -461,4 +481,153 @@ export type PipelineExportedState = {
     data?: any;
     timestamp: string;
   }>;
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 3.3 Типобезопасные имена log-событий
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Все возможные типы событий в логах pipeline.
+ * Используется для типобезопасной фильтрации и обработки логов.
+ */
+export type PipelineLogEventType =
+  | "step:start"
+  | "step:success"
+  | "step:error"
+  | "step:skipped"
+  | "rerunStep:start"
+  | "rerunStep:success"
+  | "rerunStep:error"
+  | "pipeline:retry"
+  | "pipeline:error"
+  | "subPipeline:start"
+  | "subPipeline:success"
+  | "subPipeline:error"
+  | "subPipeline:exception"
+  | "stream:start"
+  | "stream:success"
+  | "stream:error";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 3.1 Метрики pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Коллбэки для наблюдения за выполнением pipeline.
+ * Задаются в PipelineConfig.metrics.
+ */
+export interface PipelineMetrics {
+  /** Вызывается при старте pipeline.run() */
+  onPipelineStart?: (info: { timestamp: number }) => void;
+  /** Вызывается при завершении pipeline.run() */
+  onPipelineEnd?: (info: {
+    durationMs: number;
+    success: boolean;
+    stageResults: PipelineStageResults;
+  }) => void;
+  /** Вызывается после каждого выполненного шага с его длительностью */
+  onStepDuration?: (info: {
+    stepKey: string;
+    durationMs: number;
+    status: PipelineStepStatus;
+  }) => void;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 5.2 Адаптер персистентного состояния
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Адаптер для сохранения и восстановления состояния pipeline.
+ * Передаётся в PipelineConfig.options.persistAdapter.
+ *
+ * @example
+ * const localStorageAdapter: PipelineStateAdapter = {
+ *   save: (state) => localStorage.setItem("pipeline", JSON.stringify(state)),
+ *   load: () => JSON.parse(localStorage.getItem("pipeline") ?? "null"),
+ * };
+ */
+export type PipelineStateAdapter = {
+  /** Сохранить снимок состояния */
+  save(state: PipelineExportedState): void | Promise<void>;
+  /** Загрузить ранее сохранённый снимок (null если ничего нет) */
+  load(): PipelineExportedState | null | Promise<PipelineExportedState | null>;
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 5.1 Плагинная система
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Плагин для PipelineOrchestrator.
+ * `install()` получает экземпляр orchestrator и может подписываться на события,
+ * добавлять middleware-логику и т.д. Если возвращает функцию — она вызывается при cleanup.
+ */
+export type PipelinePlugin = {
+  /** Уникальное имя плагина */
+  name: string;
+  /** Устанавливает плагин. Получает orchestrator, возвращает опциональную cleanup-функцию. */
+  // Используем any для избежания циклической зависимости с pipeline-orchestrator.ts
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  install(orchestrator: any): void | (() => void);
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 5.4 HTTP-адаптер (альтернатива axios)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Абстрактный HTTP-адаптер. Позволяет использовать fetch или любой другой
+ * HTTP-клиент вместо встроенного axios. Если не указан — используется axios.
+ *
+ * @example
+ * const fetchAdapter: HttpAdapter = {
+ *   async request(config) {
+ *     const res = await fetch(`${config.baseURL ?? ""}${config.url ?? ""}`, {
+ *       method: config.method ?? "GET",
+ *       body: config.data ? JSON.stringify(config.data) : undefined,
+ *       headers: { "Content-Type": "application/json", ...config.headers },
+ *       signal: config.signal,
+ *     });
+ *     const data = await res.json();
+ *     return { data, status: res.status, statusText: res.statusText, headers: {} };
+ *   },
+ * };
+ */
+export type HttpAdapter = {
+  request<T = unknown>(config: RestRequestConfig & { baseURL?: string }): Promise<ApiResponse<T>>;
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 5.3 Stream-шаги (SSE / AsyncIterable)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Шаг pipeline, получающий данные в виде потока (AsyncIterable).
+ * Используется для SSE, WebSocket-стримов или любого асинхронного итератора.
+ * Результатом шага является массив всех накопленных чанков.
+ */
+export type StreamStageConfig<T = unknown> = {
+  /** Уникальный ключ шага */
+  key: string;
+  /**
+   * Функция, возвращающая AsyncIterable<T>.
+   * Вызывается с теми же параметрами, что и обычный request.
+   */
+  stream: (params: {
+    prev: any;
+    allResults: Record<string, PipelineStepResult>;
+    sharedData: Record<string, any>;
+  }) => AsyncIterable<T>;
+  /**
+   * Вызывается для каждого полученного чанка в реальном времени.
+   * Полезно для потоковой передачи в UI.
+   */
+  onChunk?: (chunk: T, sharedData: Record<string, any>) => void;
+  /**
+   * Продолжить выполнение pipeline при ошибке стрима.
+   * Переопределяет глобальный флаг continueOnError.
+   */
+  continueOnError?: boolean;
 };
