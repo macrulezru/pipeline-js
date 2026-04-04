@@ -33,7 +33,7 @@ export declare function usePipelineLogsVue(orchestrator: PipelineOrchestrator): 
  * @param orchestrator PipelineOrchestrator instance
  * @returns rerunStep function
  */
-export declare function useRerunPipelineStepVue(orchestrator: PipelineOrchestrator): (stepKey: string, options?: {
+export declare function useRerunPipelineStepVue(orchestrator: PipelineOrchestrator): (stepKey: string | (string & {}), options?: {
     onStepPause?: (stepIndex: number, stepResult: unknown, stageResults: Record<string, import("./types").PipelineStepResult>) => Promise<unknown> | unknown;
     externalSignal?: AbortSignal;
 }) => Promise<import("./types").PipelineStepResult | undefined>;

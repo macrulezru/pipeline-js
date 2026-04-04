@@ -9,3 +9,4 @@ export {
   usePipelineLogsReact,
   useRerunPipelineStepReact,
 } from "./usePipelineStepEvents-react";
+export { usePipelineStageResultReact } from "./usePipelineStageResult-react";

@@ -21,3 +21,5 @@ __exportStar(require("./request-executor"), exports);
 __exportStar(require("./error-handler"), exports);
 __exportStar(require("./progress-tracker"), exports);
 __exportStar(require("./pipeline-orchestrator"), exports);
+__exportStar(require("./pipeline-builder"), exports);
+__exportStar(require("./pipeline-validator"), exports);

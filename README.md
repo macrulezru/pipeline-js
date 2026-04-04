@@ -161,6 +161,7 @@ Creates a REST client with advanced HTTP features.
 | `sanitizeHeaders`                  | Mask sensitive headers in metrics callbacks (default: `false`)                   |
 | `sensitiveHeaders`                 | Additional headers to mask (extends `DEFAULT_SENSITIVE_HEADERS`)                 |
 | `retry.maxRetryAfterMs`            | Max wait from `Retry-After` header in ms (default: `60000`)                      |
+| `adapter`                          | Custom HTTP adapter (e.g. native `fetch`) — replaces built-in axios              |
 
 **Per-request cache override:**
 
@@ -290,6 +291,8 @@ new PipelineOrchestrator({
 | `isPaused()`                               | Check if pipeline is paused                                                           |
 | `exportState()`                            | Serialize stageResults and logs to a plain object                                     |
 | `importState(state)`                       | Restore stageResults and logs from a snapshot                                         |
+| `getStageResults()`                        | Synchronous snapshot of all stage results (no subscription needed)                    |
+| `destroy()`                                | Run cleanup callbacks from all installed plugins                                      |
 | `subscribeProgress(listener)`              | Subscribe to progress updates                                                         |
 | `subscribeStageResults(listener)`          | Subscribe to stageResults changes                                                     |
 | `subscribeStepProgress(stepKey, listener)` | Subscribe to a specific stage's progress                                              |
@@ -457,6 +460,255 @@ console.log(orchestrator2.getLogs()); // restored logs (timestamps as Date objec
 
 ---
 
+### Pipeline metrics
+
+Observe pipeline execution without modifying stage logic:
+
+```js
+const orchestrator = new PipelineOrchestrator({
+  config: {
+    stages: [ /* ... */ ],
+    metrics: {
+      onPipelineStart: ({ timestamp }) => {
+        console.log("Pipeline started at", new Date(timestamp).toISOString());
+      },
+      onPipelineEnd: ({ durationMs, success, stageResults }) => {
+        analytics.track("pipeline_complete", { durationMs, success });
+      },
+      onStepDuration: ({ stepKey, durationMs, status }) => {
+        console.log(`[${stepKey}] ${status} in ${durationMs}ms`);
+      },
+    },
+  },
+});
+```
+
+| Callback | Receives | Description |
+|----------|----------|-------------|
+| `onPipelineStart` | `{ timestamp }` | Fires at the beginning of `run()` |
+| `onPipelineEnd` | `{ durationMs, success, stageResults }` | Fires when `run()` completes |
+| `onStepDuration` | `{ stepKey, durationMs, status }` | Fires after every executed step |
+
+---
+
+### createPipeline() + pipe() builder
+
+#### createPipeline() — short factory
+
+```js
+import { createPipeline } from "rest-pipeline-js";
+
+const orchestrator = createPipeline(
+  [
+    { key: "fetchUser", request: async () => fetchUser() },
+    { key: "process",   request: async ({ prev }) => process(prev) },
+  ],
+  {
+    httpConfig: { baseURL: "https://api.example.com" },
+    sharedData: { userId: 42 },
+    pipelineOptions: { continueOnError: false },
+    metrics: { onStepDuration: ({ stepKey, durationMs }) => console.log(stepKey, durationMs) },
+  },
+);
+```
+
+#### pipe() — fluent builder
+
+```js
+import { pipe } from "rest-pipeline-js";
+
+const orchestrator = pipe()
+  .step({ key: "auth", request: async () => getToken() })
+  .step({ key: "fetchUser", request: async ({ prev }) => fetchUser(prev) })
+  .parallel([
+    { key: "loadPosts",  request: async () => fetchPosts() },
+    { key: "loadNotifs", request: async () => fetchNotifications() },
+  ])
+  .stream({
+    key: "liveUpdates",
+    stream: async function* () { yield* subscribe("/events"); },
+    onChunk: (chunk) => updateUI(chunk),
+  })
+  .build({ httpConfig: { baseURL: "https://api.example.com" } });
+```
+
+| Builder method | Description |
+|----------------|-------------|
+| `.step(stage)` | Add a sequential stage |
+| `.parallel(stages, options?)` | Add a parallel group (`key` auto-generated if omitted) |
+| `.subPipeline(item)` | Embed a sub-pipeline as a stage |
+| `.stream(stage)` | Add a stream stage (AsyncIterable) |
+| `.build(options?)` | Create and return a `PipelineOrchestrator` |
+| `.toConfig(options?)` | Return `PipelineConfig` without creating an orchestrator |
+
+---
+
+### validatePipelineConfig()
+
+Catch configuration errors before runtime:
+
+```js
+import { validatePipelineConfig } from "rest-pipeline-js";
+
+const { valid, errors } = validatePipelineConfig({
+  stages: [
+    { key: "step1", request: async () => data },
+    { key: "step1", request: async () => other }, // duplicate!
+    { key: "",      request: async () => other }, // empty key!
+  ],
+});
+
+if (!valid) console.error(errors);
+// ["[root] duplicate stage key: "step1"", "[root] stage key must be a non-empty string"]
+```
+
+Validates: duplicate keys, empty/invalid keys, empty `stages` array, invalid field types (`request`, `condition`, `retryCount`, `timeoutMs`), and recursively validates nested `subPipeline` configs.
+
+---
+
+### Plugin system
+
+Package reusable orchestrator behavior into plugins:
+
+```js
+const loggingPlugin = {
+  name: "logging",
+  install(orchestrator) {
+    const off = orchestrator.on("log", (event) => {
+      if (event.type === "step:success") console.log("✓", event.stepKey);
+      if (event.type === "step:error")   console.error("✗", event.stepKey, event.error);
+    });
+    return () => off(); // cleanup on orchestrator.destroy()
+  },
+};
+
+const orchestrator = new PipelineOrchestrator({
+  config: {
+    stages: [ /* ... */ ],
+    options: {
+      plugins: [loggingPlugin, analyticsPlugin],
+    },
+  },
+});
+
+// Call when the orchestrator is no longer needed:
+orchestrator.destroy();
+```
+
+- `install(orchestrator)` — receives the orchestrator instance; may subscribe to events, set up middleware, etc.
+- If `install` returns a function, it is registered as a cleanup callback and invoked by `destroy()`.
+
+---
+
+### Persist adapter
+
+Automatically save and restore pipeline state across page reloads:
+
+```js
+const localStorageAdapter = {
+  save: (state) => localStorage.setItem("pipeline", JSON.stringify(state)),
+  load: () => {
+    const raw = localStorage.getItem("pipeline");
+    return raw ? JSON.parse(raw) : null;
+  },
+};
+
+const orchestrator = new PipelineOrchestrator({
+  config: {
+    stages: [ /* ... */ ],
+    options: { persistAdapter: localStorageAdapter },
+  },
+});
+
+// run() loads saved state at start; saves after each completed step
+await orchestrator.run();
+```
+
+The adapter interface:
+
+```ts
+type PipelineStateAdapter = {
+  save(state: PipelineExportedState): void | Promise<void>;
+  load(): PipelineExportedState | null | Promise<PipelineExportedState | null>;
+};
+```
+
+Both methods may be async (useful for IndexedDB or remote storage).
+
+---
+
+### Stream stages (SSE / AsyncIterable)
+
+A stage whose `stream` function returns an `AsyncIterable<T>`. The orchestrator collects all emitted chunks into an array (the stage result). `onChunk` is called for each chunk in real time.
+
+```js
+const orchestrator = createPipeline([
+  { key: "auth", request: async () => getToken() },
+  {
+    key: "liveData",
+    stream: async function* ({ prev }) {
+      // prev is the result of "auth"
+      const source = new EventSource(`/api/stream?token=${prev}`);
+      yield* eventSourceToAsyncIterable(source);
+    },
+    onChunk: (chunk, sharedData) => {
+      sharedData.partial = (sharedData.partial ?? "") + chunk;
+      updateUI(sharedData.partial);
+    },
+  },
+  {
+    key: "finalize",
+    // allResults.liveData.data is the full array of chunks
+    request: async ({ allResults }) => allResults.liveData.data.join(""),
+  },
+]);
+```
+
+- Respects `abort()` — checks the abort signal between each chunk.
+- Supports `continueOnError` — failed stream stages can be skipped like any other step.
+- Emits standard step events: `step:start`, `step:success`, `step:error`.
+
+---
+
+### HTTP Adapter (custom fetch / edge environments)
+
+Replace the built-in axios client with any HTTP implementation:
+
+```js
+const fetchAdapter = {
+  async request(config) {
+    const url = `${config.baseURL ?? ""}${config.url ?? ""}`;
+    const res = await fetch(url, {
+      method: config.method ?? "GET",
+      body: config.data ? JSON.stringify(config.data) : undefined,
+      headers: { "Content-Type": "application/json", ...config.headers },
+      signal: config.signal,
+    });
+    const data = await res.json();
+    return { data, status: res.status, statusText: res.statusText,
+             headers: Object.fromEntries(res.headers.entries()) };
+  },
+};
+
+const client = createRestClient({
+  baseURL: "https://api.example.com",
+  adapter: fetchAdapter,
+  // Auth, interceptors, sanitizeHeaders, metrics still work on top of the adapter
+  auth: { getToken: async () => token },
+  interceptors: { request: [addCorrelationId] },
+});
+```
+
+```ts
+type HttpAdapter = {
+  request<T = unknown>(
+    config: RestRequestConfig & { baseURL?: string },
+  ): Promise<ApiResponse<T>>;
+};
+```
+
+---
+
 ### Vue integration
 
 #### Example: use in Vue component
@@ -504,6 +756,7 @@ Composition functions (import from `rest-pipeline-js/vue`):
 | `usePipelineLogsVue(orchestrator)`                          | `Ref<log[]>`                                                                                        | Reactive logs                          |
 | `useRerunPipelineStepVue(orchestrator)`                     | `function`                                                                                          | Bound `rerunStep`                      |
 | `useRestClientVue(config)`                                  | `ComputedRef<RestClient>`                                                                           | Reactive REST client                   |
+| `usePipelineStageResultVue(orchestrator, stepKey)`          | `Ref<PipelineStepResult \| null>`                                                                   | Reactive result of a single stage      |
 
 ---
 
@@ -560,6 +813,7 @@ Hooks (import from `rest-pipeline-js/react`):
 | `usePipelineLogsReact(orchestrator)`                          | `log[]`                                                                            | Reactive logs                          |
 | `useRerunPipelineStepReact(orchestrator)`                     | `function`                                                                         | Bound `rerunStep`                      |
 | `useRestClientReact(config)`                                  | `RestClient`                                                                       | Memoized REST client                   |
+| `usePipelineStageResultReact(orchestrator, stepKey)`          | `PipelineStepResult \| null`                                                       | Result of a single stage               |
 
 ---
 

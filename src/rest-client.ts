@@ -208,26 +208,37 @@ export function createRestClient(config: HttpConfig) {
     }
 
     try {
-      const response: AxiosResponse<T> = await httpClient.request<T>({
-        url: command,
-        ...processedReq,
-        headers: processedReq?.headers,
-      });
+      let payload: ApiResponse<T>;
 
-      let payload: ApiResponse<T> = {
-        data: response.data,
-        status: response.status,
-        statusText: response.statusText,
-        headers: response.headers as Record<string, string>,
-      };
+      if (config.adapter) {
+        // ── Custom HTTP adapter (fetch, etc.) ───────────────────────────
+        payload = await config.adapter.request<T>({
+          ...processedReq,
+          baseURL: config.baseURL,
+          url: command,
+        });
+      } else {
+        // ── Default: axios ───────────────────────────────────────────────
+        const response: AxiosResponse<T> = await httpClient.request<T>({
+          url: command,
+          ...processedReq,
+          headers: processedReq?.headers,
+        });
+        payload = {
+          data: response.data,
+          status: response.status,
+          statusText: response.statusText,
+          headers: response.headers as Record<string, string>,
+        };
+      }
 
       const duration = Date.now() - startTs;
 
       // --- Вычисление размера ответа ---
       let responseBytes: number | undefined;
-      const headers = response.headers as Record<string, string>;
+      const respHeaders = payload.headers;
       const contentLengthHeader =
-        headers["content-length"] || headers["Content-Length"];
+        respHeaders["content-length"] || respHeaders["Content-Length"];
       const parsedLength = contentLengthHeader
         ? Number(contentLengthHeader)
         : NaN;
@@ -235,7 +246,7 @@ export function createRestClient(config: HttpConfig) {
         responseBytes = parsedLength;
       } else {
         try {
-          const raw = response.data;
+          const raw = payload.data;
           if (typeof raw === "string") {
             responseBytes = new TextEncoder().encode(raw).length;
           } else if (raw !== undefined) {
@@ -251,12 +262,10 @@ export function createRestClient(config: HttpConfig) {
       config.metrics?.onRequestEnd?.({
         id: reqId,
         durationMs: duration,
-        status: response.status,
+        status: payload.status,
         bytes: responseBytes,
-        responseBody: response.data,
-        responseHeaders: maybeSanitize(
-          response.headers as Record<string, string>,
-        ),
+        responseBody: payload.data,
+        responseHeaders: maybeSanitize(payload.headers),
       });
 
       // --- Response interceptors ---
@@ -285,12 +294,10 @@ export function createRestClient(config: HttpConfig) {
       const duration = Date.now() - startTs;
 
       // --- Auth: 401 → onUnauthorized() → одна попытка повтора ---
-      if (
-        config.auth &&
-        !_retried &&
-        axios.isAxiosError(error) &&
-        error.response?.status === 401
-      ) {
+      const errorStatus = axios.isAxiosError(error)
+        ? error.response?.status
+        : (error as any)?.status;
+      if (config.auth && !_retried && errorStatus === 401) {
         await config.auth.onUnauthorized?.();
         // Повторяем с флагом _retried=true — второй 401 уже не будет перехвачен
         return _executeRequest<T>(command, req, true);
@@ -461,6 +468,7 @@ export function getRestClient(config: HttpConfig): RestClient {
     deduplicateRequests: config.deduplicateRequests ?? false,
     interceptors: !!config.interceptors,
     onError: !!config.onError,
+    adapter: !!config.adapter,
   });
 
   const cachedClient = restClientCache.get(key);

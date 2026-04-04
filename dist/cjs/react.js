@@ -15,7 +15,7 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
     for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.useRerunPipelineStepReact = exports.usePipelineLogsReact = exports.usePipelineStepEventReact = exports.useRestClientReact = exports.usePipelineRunReact = exports.usePipelineProgressReact = void 0;
+exports.usePipelineStageResultReact = exports.useRerunPipelineStepReact = exports.usePipelineLogsReact = exports.usePipelineStepEventReact = exports.useRestClientReact = exports.usePipelineRunReact = exports.usePipelineProgressReact = void 0;
 __exportStar(require("./index"), exports);
 var usePipelineProgress_react_1 = require("./usePipelineProgress-react");
 Object.defineProperty(exports, "usePipelineProgressReact", { enumerable: true, get: function () { return usePipelineProgress_react_1.usePipelineProgressReact; } });
@@ -27,3 +27,5 @@ var usePipelineStepEvents_react_1 = require("./usePipelineStepEvents-react");
 Object.defineProperty(exports, "usePipelineStepEventReact", { enumerable: true, get: function () { return usePipelineStepEvents_react_1.usePipelineStepEventReact; } });
 Object.defineProperty(exports, "usePipelineLogsReact", { enumerable: true, get: function () { return usePipelineStepEvents_react_1.usePipelineLogsReact; } });
 Object.defineProperty(exports, "useRerunPipelineStepReact", { enumerable: true, get: function () { return usePipelineStepEvents_react_1.useRerunPipelineStepReact; } });
+var usePipelineStageResult_react_1 = require("./usePipelineStageResult-react");
+Object.defineProperty(exports, "usePipelineStageResultReact", { enumerable: true, get: function () { return usePipelineStageResult_react_1.usePipelineStageResultReact; } });
