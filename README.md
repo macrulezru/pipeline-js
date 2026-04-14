@@ -850,6 +850,21 @@ import {
 
 ---
 
+## Vue Demo
+
+A live interactive demo of the pipeline running against a real flight-search API — 4 sequential stages: airport lookup, availability, ancillary services, and seat map.
+
+```bash
+git clone https://github.com/macrulezru/pipeline-js.git
+cd pipeline-js
+npm install
+npm run demo:vue
+```
+
+Opens at `http://localhost:3000` (or the next available port). Click **Run Pipeline** to execute all stages and watch results appear in real time. A boarding pass is rendered when all stages succeed.
+
+---
+
 ## Development
 
 ```bash
