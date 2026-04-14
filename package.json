@@ -1,6 +1,6 @@
 {
   "name": "rest-pipeline-js",
-  "version": "1.3.7",
+  "version": "1.3.8",
   "description": "Pipeline Orchestration Utilities for JavaScript REST API Clients",
   "main": "dist/cjs/index.js",
   "module": "dist/esm/index.js",
@@ -68,6 +68,7 @@
     "react-dom": "^19.2.3"
   },
   "dependencies": {
-    "axios": "^1.13.2"
+    "axios": "^1.13.2",
+    "prismjs": "^1.30.0"
   }
 }
