@@ -1,4 +1,13 @@
-## rest-pipeline-js
+<div align="center" style="background:#111827;border-radius:20px;padding:28px 20px 20px;margin-bottom:32px">
+  <h1 style="color:#f9fafb;margin:0 0 32px;font-size:2.2em;letter-spacing:-0.03em;font-weight:700;font-family:sans-serif">
+    rest-pipeline-js
+  </h1>
+  <img
+    src="https://s3.twcstorage.ru/c9a2cc89-780f97fd-311d-4a1a-b86f-c25665c9dc46/images/npm/rest-pipeline-js.webp"
+    alt="vue-virtual-scroller-kit"
+    style="max-width:100%;width:auto;height:300px;border-radius:12px"
+  />
+</div>
 
 **Flexible, modular pipeline orchestrator for REST APIs.**
 
@@ -467,7 +476,9 @@ Observe pipeline execution without modifying stage logic:
 ```js
 const orchestrator = new PipelineOrchestrator({
   config: {
-    stages: [ /* ... */ ],
+    stages: [
+      /* ... */
+    ],
     metrics: {
       onPipelineStart: ({ timestamp }) => {
         console.log("Pipeline started at", new Date(timestamp).toISOString());
@@ -483,11 +494,11 @@ const orchestrator = new PipelineOrchestrator({
 });
 ```
 
-| Callback | Receives | Description |
-|----------|----------|-------------|
-| `onPipelineStart` | `{ timestamp }` | Fires at the beginning of `run()` |
-| `onPipelineEnd` | `{ durationMs, success, stageResults }` | Fires when `run()` completes |
-| `onStepDuration` | `{ stepKey, durationMs, status }` | Fires after every executed step |
+| Callback          | Receives                                | Description                       |
+| ----------------- | --------------------------------------- | --------------------------------- |
+| `onPipelineStart` | `{ timestamp }`                         | Fires at the beginning of `run()` |
+| `onPipelineEnd`   | `{ durationMs, success, stageResults }` | Fires when `run()` completes      |
+| `onStepDuration`  | `{ stepKey, durationMs, status }`       | Fires after every executed step   |
 
 ---
 
@@ -501,13 +512,16 @@ import { createPipeline } from "rest-pipeline-js";
 const orchestrator = createPipeline(
   [
     { key: "fetchUser", request: async () => fetchUser() },
-    { key: "process",   request: async ({ prev }) => process(prev) },
+    { key: "process", request: async ({ prev }) => process(prev) },
   ],
   {
     httpConfig: { baseURL: "https://api.example.com" },
     sharedData: { userId: 42 },
     pipelineOptions: { continueOnError: false },
-    metrics: { onStepDuration: ({ stepKey, durationMs }) => console.log(stepKey, durationMs) },
+    metrics: {
+      onStepDuration: ({ stepKey, durationMs }) =>
+        console.log(stepKey, durationMs),
+    },
   },
 );
 ```
@@ -521,25 +535,27 @@ const orchestrator = pipe()
   .step({ key: "auth", request: async () => getToken() })
   .step({ key: "fetchUser", request: async ({ prev }) => fetchUser(prev) })
   .parallel([
-    { key: "loadPosts",  request: async () => fetchPosts() },
+    { key: "loadPosts", request: async () => fetchPosts() },
     { key: "loadNotifs", request: async () => fetchNotifications() },
   ])
   .stream({
     key: "liveUpdates",
-    stream: async function* () { yield* subscribe("/events"); },
+    stream: async function* () {
+      yield* subscribe("/events");
+    },
     onChunk: (chunk) => updateUI(chunk),
   })
   .build({ httpConfig: { baseURL: "https://api.example.com" } });
 ```
 
-| Builder method | Description |
-|----------------|-------------|
-| `.step(stage)` | Add a sequential stage |
-| `.parallel(stages, options?)` | Add a parallel group (`key` auto-generated if omitted) |
-| `.subPipeline(item)` | Embed a sub-pipeline as a stage |
-| `.stream(stage)` | Add a stream stage (AsyncIterable) |
-| `.build(options?)` | Create and return a `PipelineOrchestrator` |
-| `.toConfig(options?)` | Return `PipelineConfig` without creating an orchestrator |
+| Builder method                | Description                                              |
+| ----------------------------- | -------------------------------------------------------- |
+| `.step(stage)`                | Add a sequential stage                                   |
+| `.parallel(stages, options?)` | Add a parallel group (`key` auto-generated if omitted)   |
+| `.subPipeline(item)`          | Embed a sub-pipeline as a stage                          |
+| `.stream(stage)`              | Add a stream stage (AsyncIterable)                       |
+| `.build(options?)`            | Create and return a `PipelineOrchestrator`               |
+| `.toConfig(options?)`         | Return `PipelineConfig` without creating an orchestrator |
 
 ---
 
@@ -554,7 +570,7 @@ const { valid, errors } = validatePipelineConfig({
   stages: [
     { key: "step1", request: async () => data },
     { key: "step1", request: async () => other }, // duplicate!
-    { key: "",      request: async () => other }, // empty key!
+    { key: "", request: async () => other }, // empty key!
   ],
 });
 
@@ -576,7 +592,8 @@ const loggingPlugin = {
   install(orchestrator) {
     const off = orchestrator.on("log", (event) => {
       if (event.type === "step:success") console.log("✓", event.stepKey);
-      if (event.type === "step:error")   console.error("✗", event.stepKey, event.error);
+      if (event.type === "step:error")
+        console.error("✗", event.stepKey, event.error);
     });
     return () => off(); // cleanup on orchestrator.destroy()
   },
@@ -584,7 +601,9 @@ const loggingPlugin = {
 
 const orchestrator = new PipelineOrchestrator({
   config: {
-    stages: [ /* ... */ ],
+    stages: [
+      /* ... */
+    ],
     options: {
       plugins: [loggingPlugin, analyticsPlugin],
     },
@@ -615,7 +634,9 @@ const localStorageAdapter = {
 
 const orchestrator = new PipelineOrchestrator({
   config: {
-    stages: [ /* ... */ ],
+    stages: [
+      /* ... */
+    ],
     options: { persistAdapter: localStorageAdapter },
   },
 });
@@ -685,8 +706,12 @@ const fetchAdapter = {
       signal: config.signal,
     });
     const data = await res.json();
-    return { data, status: res.status, statusText: res.statusText,
-             headers: Object.fromEntries(res.headers.entries()) };
+    return {
+      data,
+      status: res.status,
+      statusText: res.statusText,
+      headers: Object.fromEntries(res.headers.entries()),
+    };
   },
 };
 
