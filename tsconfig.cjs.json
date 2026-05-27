@@ -3,6 +3,7 @@
     "target": "ES2019",
     "module": "CommonJS",
     "moduleResolution": "Node",
+    "ignoreDeprecations": "5.0",
     "declaration": false,
     "outDir": "dist/cjs",
     "rootDir": "src",

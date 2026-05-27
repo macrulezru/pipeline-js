@@ -84,7 +84,7 @@ npm install react@>=19 react-dom@>=19
 
 ## Demo
 
-A live interactive demo of the pipeline running against a real flight-search API — 4 sequential stages: airport lookup, availability, ancillary services, and seat map.
+A multi-scenario interactive demo showcasing the key features of `rest-pipeline-js`. All demos use real public REST APIs.
 
 ```bash
 git clone https://github.com/macrulezru/pipeline-js.git
@@ -93,7 +93,14 @@ npm install
 npm run demo:vue
 ```
 
-Opens at `http://localhost:3000` (or the next available port). Click **Run Pipeline** to execute all stages and watch results appear in real time. A boarding pass is rendered when all stages succeed.
+Opens at `http://localhost:3000`. The demo app lives in the `demo/` directory.
+
+| Demo | What it shows |
+|---|---|
+| ✈️ **Flight Pipeline** | 4-stage sequential pipeline with `sharedData`, `pauseBefore`/`pauseAfter`, middleware, boarding pass result |
+| 🔀 **Parallel Loading** | `pipe()` fluent builder with `.parallel([])` — 3 sources queried simultaneously, timing breakdown |
+| 🛡️ **Retry & Recovery** | Configurable flaky stage with exponential backoff, event log, `abort()`, pause/resume between stages |
+| ⚡ **Cache & Rate Limit** | `createRestClient()` with cache TTL — see server vs cache timing; rate limiter burst visualization |
 
 ---
 

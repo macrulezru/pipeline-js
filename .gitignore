@@ -28,3 +28,5 @@ plans
 .eslintcache
 
 desktop.ini
+
+dist/demo
