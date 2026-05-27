@@ -1,15 +1,15 @@
 <script setup lang="ts">
-import { ref, computed, reactive } from "vue";
+import { ref, computed } from "vue";
 import { createRestClient } from "rest-pipeline-js";
 
 const BASE = "https://macrulez-api.ru";
 
 // ── Settings ─────────────────────────────────────────────────────
-const cacheTtl        = ref(30000);  // ms
-const maxConcurrent   = ref(2);
-const maxPerInterval  = ref(4);
-const intervalMs      = ref(2000);
-const burstCount      = ref(6);
+const cacheTtl       = ref(30000);
+const maxConcurrent  = ref(2);
+const maxPerInterval = ref(4);
+const intervalMs     = ref(2000);
+const burstCount     = ref(6);
 
 // ── Request log ───────────────────────────────────────────────────
 interface ReqEntry {
@@ -40,22 +40,55 @@ function resolveReq(id: number, patch: Partial<ReqEntry>) {
   if (r) Object.assign(r, patch);
 }
 
+// ── Tracked request wrapper ───────────────────────────────────────
+// Обёртка вместо metrics-коллбэков: rest-client создаёт разные объекты
+// для onRequestStart и onRequestEnd, поэтому сохранить _demoId невозможно.
+// Кроме того, кэш-хиты возвращаются до вызова _executeRequest — метрики
+// там вообще не срабатывают.
+async function trackedGet(
+  client: ReturnType<typeof createRestClient>,
+  path: string,
+  group: ReqEntry["group"],
+): Promise<void> {
+  const id = addReq(path, group);
+  const start = Date.now();
+  try {
+    const res = await client.get(path);
+    const dur = Date.now() - start;
+    let bytes: number | null = null;
+    try { bytes = res.data ? JSON.stringify(res.data).length : null; } catch { /**/ }
+    resolveReq(id, {
+      status:    "success",
+      durationMs: dur,
+      statusCode: (res as any).status ?? 200,
+      bytes,
+      cached:    dur < 5,   // эвристика: < 5мс = ответ из памяти
+    });
+  } catch (e: any) {
+    resolveReq(id, {
+      status:    "error",
+      durationMs: Date.now() - start,
+      statusCode: e?.response?.status ?? null,
+    });
+  }
+}
+
 // ── Stats ─────────────────────────────────────────────────────────
-const cacheHits   = computed(() => reqLog.value.filter((r) => r.cached && r.group === "cache").length);
-const cacheMisses = computed(() => reqLog.value.filter((r) => !r.cached && r.group === "cache" && r.status === "success").length);
+const cacheHits    = computed(() => reqLog.value.filter((r) => r.cached  && r.group === "cache").length);
+const cacheMisses  = computed(() => reqLog.value.filter((r) => !r.cached && r.group === "cache" && r.status === "success").length);
 const cacheHitRate = computed(() => {
   const total = cacheHits.value + cacheMisses.value;
   return total > 0 ? Math.round((cacheHits.value / total) * 100) : 0;
 });
 
-const cacheReqs = computed(() => reqLog.value.filter((r) => r.group === "cache" && r.status === "success"));
-const avgCached    = computed(() => {
-  const hits = cacheReqs.value.filter((r) => r.cached);
+const cacheSuccessReqs = computed(() => reqLog.value.filter((r) => r.group === "cache" && r.status === "success"));
+const avgCached   = computed(() => {
+  const hits = cacheSuccessReqs.value.filter((r) => r.cached);
   if (!hits.length) return null;
   return Math.round(hits.reduce((s, r) => s + (r.durationMs ?? 0), 0) / hits.length);
 });
-const avgUncached  = computed(() => {
-  const misses = cacheReqs.value.filter((r) => !r.cached);
+const avgUncached = computed(() => {
+  const misses = cacheSuccessReqs.value.filter((r) => !r.cached);
   if (!misses.length) return null;
   return Math.round(misses.reduce((s, r) => s + (r.durationMs ?? 0), 0) / misses.length);
 });
@@ -67,23 +100,6 @@ function buildCacheClient() {
     timeout: 15000,
     cache: { enabled: true, ttlMs: cacheTtl.value },
     sanitizeHeaders: true,
-    metrics: {
-      onRequestStart: (info: any) => {
-        const url = (info.url as string) ?? "";
-        const id = addReq(url.replace(BASE, ""), "cache");
-        info._demoId = id;
-      },
-      onRequestEnd: (info: any) => {
-        const id = info._demoId as number;
-        resolveReq(id, {
-          status:     info.error ? "error" : "success",
-          durationMs: info.durationMs ?? (Date.now() - (reqLog.value.find((r) => r.id === id)?.startedAt ?? Date.now())),
-          statusCode: info.status ?? null,
-          bytes:      info.bytes  ?? null,
-          cached:     (info.durationMs ?? 999) < 5,  // heuristic: <5ms = served from cache
-        });
-      },
-    },
   });
 }
 
@@ -92,25 +108,9 @@ function buildRateClient() {
     baseURL: BASE,
     timeout: 15000,
     rateLimit: {
-      maxConcurrent:        maxConcurrent.value,
+      maxConcurrent:          maxConcurrent.value,
       maxRequestsPerInterval: maxPerInterval.value,
-      intervalMs:           intervalMs.value,
-    },
-    metrics: {
-      onRequestStart: (info: any) => {
-        const url = (info.url as string) ?? "";
-        const id = addReq(url.replace(BASE, ""), "rate");
-        info._demoId = id;
-      },
-      onRequestEnd: (info: any) => {
-        const id = info._demoId as number;
-        resolveReq(id, {
-          status:     info.error ? "error" : "success",
-          durationMs: info.durationMs ?? null,
-          statusCode: info.status ?? null,
-          bytes:      info.bytes  ?? null,
-        });
-      },
+      intervalMs:             intervalMs.value,
     },
   });
 }
@@ -121,15 +121,14 @@ let rateClient  = buildRateClient();
 // ── Cache demo ────────────────────────────────────────────────────
 const cacheRunning = ref(false);
 const cacheRound   = ref(0);
+const CACHE_URL    = "/api/airlines/airports?limit=8";
 
 async function runCacheRequest() {
   if (cacheRunning.value) return;
   cacheRunning.value = true;
   cacheRound.value++;
   try {
-    await cacheClient.get(`/api/airlines/airports?limit=8`);
-  } catch {
-    // errors shown via metrics callback
+    await trackedGet(cacheClient, CACHE_URL, "cache");
   } finally {
     cacheRunning.value = false;
   }
@@ -139,11 +138,14 @@ async function runCacheBurst() {
   if (cacheRunning.value) return;
   cacheRunning.value = true;
   cacheRound.value++;
+  // Запускаем 4 запроса почти одновременно.
+  // addReq() внутри trackedGet() выполняется синхронно до первого await,
+  // поэтому ID появляются в порядке 1→4, а затем все ждут сети.
+  const promises: Promise<void>[] = [];
   for (let i = 0; i < 4; i++) {
-    cacheClient.get(`/api/airlines/airports?limit=8`).catch(() => {});
-    await new Promise((r) => setTimeout(r, 120));
+    promises.push(trackedGet(cacheClient, CACHE_URL, "cache").catch(() => {}));
   }
-  await new Promise((r) => setTimeout(r, 800));
+  await Promise.allSettled(promises);
   cacheRunning.value = false;
 }
 
@@ -155,6 +157,7 @@ function clearCacheAndLog() {
 
 // ── Rate limit demo ───────────────────────────────────────────────
 const rateRunning = ref(false);
+const RATE_URL    = "/api/airlines/airports?limit=4";
 
 async function runBurst() {
   if (rateRunning.value) return;
@@ -162,25 +165,27 @@ async function runBurst() {
   rateClient = buildRateClient();
   reqLog.value = reqLog.value.filter((r) => r.group !== "rate");
 
-  const promises: Promise<any>[] = [];
+  const promises: Promise<void>[] = [];
   for (let i = 0; i < burstCount.value; i++) {
-    promises.push(rateClient.get(`/api/airlines/airports?limit=4`).catch(() => {}));
-    await new Promise((r) => setTimeout(r, 20)); // stagger slightly so IDs are ordered
+    promises.push(trackedGet(rateClient, RATE_URL, "rate").catch(() => {}));
+    // Крошечная задержка чтобы ID шли по порядку в логе
+    // (все запросы всё равно уходят в лимитер одновременно)
+    await new Promise((r) => setTimeout(r, 15));
   }
   await Promise.allSettled(promises);
   rateRunning.value = false;
 }
 
-// ── UI helpers ────────────────────────────────────────────────────
-const showCacheCode   = ref(false);
-const showRateCode    = ref(false);
-const activeTab       = ref<"cache" | "rate">("cache");
+// ── UI ────────────────────────────────────────────────────────────
+const showCacheCode = ref(false);
+const showRateCode  = ref(false);
+const activeTab     = ref<"cache" | "rate">("cache");
 
 function durColor(r: ReqEntry): string {
-  if (!r.durationMs) return "var(--text-dim)";
-  if (r.cached)      return "#a78bfa";
-  if (r.durationMs < 100) return "#4ade80";
-  if (r.durationMs < 500) return "#fbbf24";
+  if (r.status === "pending") return "var(--text-dim)";
+  if (r.cached)               return "#a78bfa";
+  if ((r.durationMs ?? 999) < 100) return "#4ade80";
+  if ((r.durationMs ?? 999) < 500) return "#fbbf24";
   return "#f87171";
 }
 
@@ -197,18 +202,18 @@ const rateLog  = computed(() => reqLog.value.filter((r) => r.group === "rate").s
         Cache &amp; Rate Limiting
       </div>
       <p class="demo-desc">
-        <strong style="color:var(--text)">Cache:</strong> hit the same endpoint multiple times — the first
-        request goes to the server; subsequent requests within the TTL are served in
-        <span style="color:#a78bfa">~0–2ms</span> from memory.
-        <strong style="color:var(--text)">Rate limiter:</strong> fire a burst of requests and watch the queue
-        throttle them to the configured concurrency and req/interval limits.
-        Both features are configured on <code style="font-family:var(--font-mono);color:var(--primary-light);font-size:12px">createRestClient()</code>.
+        <strong style="color:var(--text)">Cache:</strong> нажмите <em>Single Request</em>
+        несколько раз — первый запрос идёт на сервер, последующие возвращаются из памяти
+        за <span style="color:#a78bfa">&lt;5 мс</span>.
+        <strong style="color:var(--text)">Rate limiter:</strong> отправьте пачку запросов
+        и наблюдайте, как лимитер регулирует очередь.
+        Оба механизма настраиваются в
+        <code style="font-family:var(--font-mono);color:var(--primary-light);font-size:12px">createRestClient()</code>.
       </p>
       <div class="feature-tags">
         <span class="tag tag--primary">createRestClient</span>
         <span class="tag tag--primary">cache.ttlMs</span>
         <span class="tag tag--primary">rateLimit</span>
-        <span class="tag">metrics callbacks</span>
         <span class="tag">sanitizeHeaders</span>
       </div>
     </div>
@@ -259,8 +264,8 @@ const rateLog  = computed(() => reqLog.value.filter((r) => r.group === "rate").s
               />
             </div>
             <div style="font-size:12px;color:var(--text-sub);line-height:1.8">
-              Endpoint: <code style="font-family:var(--font-mono);color:var(--text);font-size:11px">/api/airlines/airports?limit=8</code><br/>
-              Same URL is cached — responses within TTL skip the network.
+              Endpoint: <code style="font-family:var(--font-mono);color:var(--text);font-size:11px">{{ CACHE_URL }}</code><br/>
+              Кэш сбрасывается кнопкой «Clear» или при изменении TTL.
             </div>
           </div>
         </div>
@@ -287,19 +292,19 @@ const rateLog  = computed(() => reqLog.value.filter((r) => r.group === "rate").s
           <div class="stat-box">
             <div class="stat-box__label">Cache hits</div>
             <div class="stat-box__value" style="color:#a78bfa">{{ cacheHits }}</div>
-            <div class="stat-box__sub">⚡ served from memory</div>
+            <div class="stat-box__sub">⚡ из памяти</div>
           </div>
           <div class="stat-box">
             <div class="stat-box__label">Cache misses</div>
             <div class="stat-box__value" style="color:#60a5fa">{{ cacheMisses }}</div>
-            <div class="stat-box__sub">🌐 went to server</div>
+            <div class="stat-box__sub">🌐 на сервер</div>
           </div>
           <div class="stat-box">
             <div class="stat-box__label">Hit rate</div>
             <div class="stat-box__value" :style="{ color: cacheHitRate > 50 ? '#4ade80' : '#fbbf24' }">
               {{ cacheHitRate }}%
             </div>
-            <div class="stat-box__sub">of successful requests</div>
+            <div class="stat-box__sub">от успешных</div>
           </div>
           <div class="stat-box" v-if="avgUncached !== null">
             <div class="stat-box__label">Speedup</div>
@@ -307,8 +312,8 @@ const rateLog  = computed(() => reqLog.value.filter((r) => r.group === "rate").s
               {{ avgCached !== null && avgUncached ? `${Math.round(avgUncached / Math.max(avgCached, 1))}×` : '—' }}
             </div>
             <div class="stat-box__sub">
-              server: {{ avgUncached }}ms
-              <template v-if="avgCached !== null"> · cache: {{ avgCached }}ms</template>
+              сервер: {{ avgUncached }}мс
+              <template v-if="avgCached !== null"> · кэш: {{ avgCached }}мс</template>
             </div>
           </div>
         </div>
@@ -318,7 +323,7 @@ const rateLog  = computed(() => reqLog.value.filter((r) => r.group === "rate").s
       <div class="data-panel" v-if="cacheLog.length">
         <div class="data-panel__head">
           <span>Request log</span>
-          <span class="badge badge--neutral">{{ cacheLog.length }} requests</span>
+          <span class="badge badge--neutral">{{ cacheLog.length }} запросов</span>
         </div>
         <div>
           <div class="req-log">
@@ -343,9 +348,10 @@ const rateLog  = computed(() => reqLog.value.filter((r) => r.group === "rate").s
                 <template v-else>{{ r.durationMs !== null ? r.durationMs + 'ms' : '—' }}</template>
               </span>
               <span class="req-log__src">
-                <span v-if="r.status === 'pending'" class="badge badge--running" style="font-size:10px">fetching</span>
-                <span v-else-if="r.cached"          class="badge badge--purple"  style="font-size:10px">⚡ cache</span>
-                <span v-else                        class="badge badge--running" style="font-size:10px">🌐 server</span>
+                <span v-if="r.status === 'pending'"  class="badge badge--running" style="font-size:10px">fetching</span>
+                <span v-else-if="r.cached"           class="badge badge--purple"  style="font-size:10px">⚡ cache</span>
+                <span v-else-if="r.status==='success'" class="badge badge--running" style="font-size:10px">🌐 server</span>
+                <span v-else                         class="badge badge--error"   style="font-size:10px">error</span>
               </span>
               <span class="req-log__stat">
                 <span v-if="r.status === 'success'" class="badge badge--success" style="font-size:10px">{{ r.statusCode ?? 200 }}</span>
@@ -356,16 +362,16 @@ const rateLog  = computed(() => reqLog.value.filter((r) => r.group === "rate").s
         </div>
       </div>
 
-      <!-- Empty -->
+      <!-- Empty state -->
       <div class="empty-state" v-else>
         <div style="font-size:36px;margin-bottom:12px">⚡</div>
-        <div>Click <strong>Single Request</strong> then click it again</div>
+        <div>Нажмите <strong>Single Request</strong>, потом нажмите ещё раз</div>
         <div style="font-size:12px;color:var(--text-dim);margin-top:6px">
-          The second request will be served from cache in &lt;5ms
+          Второй запрос вернётся из кэша за &lt;5мс
         </div>
       </div>
 
-      <!-- Code -->
+      <!-- Code snippet -->
       <div class="code-section" style="margin-top:20px">
         <button class="code-section__toggle" @click="showCacheCode = !showCacheCode">
           <span>▸ Cache configuration</span>
@@ -381,34 +387,26 @@ const rateLog  = computed(() => reqLog.value.filter((r) => r.group === "rate").s
 
   <span class="prop">cache</span>: {
     <span class="prop">enabled</span>: <span class="kw">true</span>,
-    <span class="prop">ttlMs</span>:   <span class="num">30000</span>,   <span class="cmt">// cache GET responses for 30 seconds</span>
+    <span class="prop">ttlMs</span>:   <span class="num">30000</span>,  <span class="cmt">// кэшировать GET-ответы 30 секунд</span>
   },
 
-  <span class="prop">sanitizeHeaders</span>: <span class="kw">true</span>,  <span class="cmt">// mask authorization, x-api-key, cookie in metrics</span>
-
-  <span class="prop">metrics</span>: {
-    <span class="prop">onRequestStart</span>: (info) <span class="op">=></span> console.log(<span class="str">"→"</span>, info.url),
-    <span class="prop">onRequestEnd</span>:   (info) <span class="op">=></span> {
-      console.log(<span class="str">"←"</span>, info.url, info.durationMs + <span class="str">"ms"</span>, info.bytes + <span class="str">"B"</span>);
-      <span class="cmt">// info.durationMs &lt; 5ms indicates a cache hit</span>
-    },
-  },
+  <span class="prop">sanitizeHeaders</span>: <span class="kw">true</span>,  <span class="cmt">// маскировать Authorization, cookie в логах</span>
 });
 
-<span class="cmt">// Request 1 → server   ~200ms</span>
+<span class="cmt">// Запрос 1 → сервер   ~200мс</span>
 <span class="kw">await</span> client.<span class="fn">get</span>(<span class="str">"/api/airlines/airports?limit=8"</span>);
 
-<span class="cmt">// Request 2 → cache    &lt;2ms  (within TTL)</span>
+<span class="cmt">// Запрос 2 → кэш      &lt;2мс  (в пределах TTL)</span>
 <span class="kw">await</span> client.<span class="fn">get</span>(<span class="str">"/api/airlines/airports?limit=8"</span>);
 
-<span class="cmt">// Per-request cache override:</span>
+<span class="cmt">// Переопределение TTL и ключа на уровне запроса:</span>
 <span class="kw">await</span> client.<span class="fn">get</span>(<span class="str">"/api/data"</span>, {
   <span class="prop">useCache</span>:   <span class="kw">true</span>,
   <span class="prop">cacheTtlMs</span>: <span class="num">5000</span>,
   <span class="prop">cacheKey</span>:   <span class="str">"my-data"</span>,
 });
 
-<span class="cmt">// Clear the whole cache:</span>
+<span class="cmt">// Сбросить кэш:</span>
 client.<span class="fn">clearCache</span>();</pre>
           </div>
         </Transition>
@@ -462,9 +460,9 @@ client.<span class="fn">clearCache</span>();</pre>
             <span class="badge badge--purple">{{ maxConcurrent }} concurrent</span>
             ·
             <span class="badge badge--running">{{ maxPerInterval }} per {{ intervalMs / 1000 }}s</span>
-            · Firing
-            <span class="badge badge--warning">{{ burstCount }} requests</span>
-            at once
+            · Запускаем
+            <span class="badge badge--warning">{{ burstCount }} запросов</span>
+            одновременно
           </div>
         </div>
       </div>
@@ -482,23 +480,35 @@ client.<span class="fn">clearCache</span>();</pre>
       <Transition name="fade">
         <div class="stats-row" v-if="rateLog.length">
           <div class="stat-box">
-            <div class="stat-box__label">Total requests</div>
+            <div class="stat-box__label">Total</div>
             <div class="stat-box__value">{{ rateLog.length }}</div>
-            <div class="stat-box__sub">fired simultaneously</div>
+            <div class="stat-box__sub">запущено</div>
           </div>
           <div class="stat-box">
             <div class="stat-box__label">Completed</div>
             <div class="stat-box__value" style="color:#4ade80">
               {{ rateLog.filter(r => r.status === 'success').length }}
             </div>
-            <div class="stat-box__sub">of {{ rateLog.length }}</div>
+            <div class="stat-box__sub">из {{ rateLog.length }}</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-box__label">Pending</div>
+            <div class="stat-box__value" style="color:#fbbf24">
+              {{ rateLog.filter(r => r.status === 'pending').length }}
+            </div>
+            <div class="stat-box__sub">в очереди / выполняются</div>
           </div>
           <div class="stat-box">
             <div class="stat-box__label">Avg duration</div>
             <div class="stat-box__value">
-              {{ (() => { const d = rateLog.filter(r => r.durationMs !== null); return d.length ? Math.round(d.reduce((s, r) => s + r.durationMs!, 0) / d.length) + 'ms' : '—'; })() }}
+              {{ (() => {
+                const d = rateLog.filter(r => r.durationMs !== null);
+                return d.length
+                  ? Math.round(d.reduce((s, r) => s + r.durationMs!, 0) / d.length) + 'ms'
+                  : '—';
+              })() }}
             </div>
-            <div class="stat-box__sub">including queue wait time</div>
+            <div class="stat-box__sub">включая ожидание в очереди</div>
           </div>
         </div>
       </Transition>
@@ -507,7 +517,7 @@ client.<span class="fn">clearCache</span>();</pre>
       <div class="data-panel" v-if="rateLog.length">
         <div class="data-panel__head">
           <span>Request log</span>
-          <span class="badge badge--neutral">{{ rateLog.length }} requests</span>
+          <span class="badge badge--neutral">{{ rateLog.length }} запросов</span>
         </div>
         <div>
           <div class="req-log">
@@ -532,9 +542,9 @@ client.<span class="fn">clearCache</span>();</pre>
                 <template v-else>{{ r.durationMs !== null ? r.durationMs + 'ms' : '—' }}</template>
               </span>
               <span class="req-log__src">
-                <span v-if="r.status === 'pending'" class="badge badge--running" style="font-size:10px">queued</span>
+                <span v-if="r.status === 'pending'"    class="badge badge--running" style="font-size:10px">queued</span>
                 <span v-else-if="r.status === 'success'" class="badge badge--success" style="font-size:10px">done</span>
-                <span v-else class="badge badge--error" style="font-size:10px">error</span>
+                <span v-else                           class="badge badge--error"   style="font-size:10px">error</span>
               </span>
               <span class="req-log__stat">
                 <span v-if="r.statusCode" class="badge badge--neutral" style="font-size:10px">{{ r.statusCode }}</span>
@@ -547,13 +557,13 @@ client.<span class="fn">clearCache</span>();</pre>
       <!-- Empty state -->
       <div class="empty-state" v-else>
         <div style="font-size:36px;margin-bottom:12px">🚦</div>
-        <div>Click <strong>Fire {{ burstCount }} requests</strong></div>
+        <div>Нажмите <strong>Fire {{ burstCount }} requests</strong></div>
         <div style="font-size:12px;color:var(--text-dim);margin-top:6px">
-          Requests beyond the concurrency limit are queued and dispatched when a slot opens
+          Запросы сверх лимита concurrency ставятся в очередь и уходят когда освобождается слот
         </div>
       </div>
 
-      <!-- Code -->
+      <!-- Code snippet -->
       <div class="code-section" style="margin-top:20px">
         <button class="code-section__toggle" @click="showRateCode = !showRateCode">
           <span>▸ Rate limiting configuration</span>
@@ -565,22 +575,22 @@ client.<span class="fn">clearCache</span>();</pre>
   <span class="prop">baseURL</span>: <span class="str">"https://macrulez-api.ru"</span>,
 
   <span class="prop">rateLimit</span>: {
-    <span class="prop">maxConcurrent</span>:         <span class="num">2</span>,    <span class="cmt">// max 2 in-flight at the same time</span>
-    <span class="prop">maxRequestsPerInterval</span>: <span class="num">4</span>,    <span class="cmt">// max 4 requests per interval</span>
-    <span class="prop">intervalMs</span>:             <span class="num">2000</span>, <span class="cmt">// interval = 2 seconds</span>
+    <span class="prop">maxConcurrent</span>:         <span class="num">2</span>,    <span class="cmt">// max 2 запроса одновременно</span>
+    <span class="prop">maxRequestsPerInterval</span>: <span class="num">4</span>,    <span class="cmt">// max 4 запроса за интервал</span>
+    <span class="prop">intervalMs</span>:             <span class="num">2000</span>, <span class="cmt">// интервал = 2 секунды</span>
   },
 });
 
-<span class="cmt">// Fire 8 requests simultaneously:</span>
+<span class="cmt">// Запускаем 8 запросов одновременно:</span>
 <span class="kw">const</span> results = <span class="kw">await</span> Promise.<span class="fn">allSettled</span>(
   Array.<span class="fn">from</span>({ length: <span class="num">8</span> }, () <span class="op">=></span>
     client.<span class="fn">get</span>(<span class="str">"/api/airlines/airports?limit=4"</span>)
   )
 );
-<span class="cmt">// Requests 1-2: start immediately (maxConcurrent=2)</span>
-<span class="cmt">// Requests 3-4: queued, start when 1-2 finish</span>
-<span class="cmt">// Requests 5-8: queued for the next interval (after 2s)</span>
-<span class="cmt">// All requests complete without error — just throttled</span></pre>
+<span class="cmt">// Запросы 1-2: стартуют немедленно (maxConcurrent=2)</span>
+<span class="cmt">// Запросы 3-4: ждут в очереди, стартуют когда 1-2 завершатся</span>
+<span class="cmt">// Запросы 5-8: ждут следующего интервала (через 2s)</span>
+<span class="cmt">// Все запросы завершаются успешно — просто с задержкой</span></pre>
           </div>
         </Transition>
       </div>
