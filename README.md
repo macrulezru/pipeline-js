@@ -3,7 +3,7 @@
     rest-pipeline-js
   </h1>
   <img
-    src="https://s3.twcstorage.ru/c9a2cc89-780f97fd-311d-4a1a-b86f-c25665c9dc46/images/npm/rest-pipeline-js.webp"
+    src="https://s3.twcstorage.ru/c9a2cc89-780f97fd-311d-4a1a-b86f-c25665c9dc46/images/npm/rest-pipeline-js_v2.webp"
     alt="rest-pipeline-js"
     style="max-width:100%;width:auto;height:300px;border-radius:12px"
   />
