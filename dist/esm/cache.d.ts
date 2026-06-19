@@ -23,6 +23,10 @@ export declare class TtlCache<K, V> {
     } | undefined;
     has(key: K): boolean;
     delete(key: K): void;
+    /** Итератор по всем ключам кэша (включая потенциально устаревшие — не фильтрует по TTL). */
+    keys(): IterableIterator<K>;
+    /** Удаляет все записи, для которых predicate(key) вернул true. Возвращает количество удалённых записей. */
+    deleteWhere(predicate: (key: K) => boolean): number;
     clear(): void;
     get size(): number;
 }

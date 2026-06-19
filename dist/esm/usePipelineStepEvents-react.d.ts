@@ -17,6 +17,7 @@ export declare function usePipelineLogsReact(orchestrator: PipelineOrchestrator)
     message: string;
     data?: any;
     timestamp: Date;
+    runId?: string;
 }[];
 /**
  * React hook for rerunning a pipeline step

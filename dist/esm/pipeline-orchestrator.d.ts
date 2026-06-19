@@ -34,6 +34,12 @@ export declare class PipelineOrchestrator<TKeys extends string = string> {
     private config;
     /** Индекс последнего упавшего шага (для pipelineRetry с retryFrom: 'failed-step') */
     private _lastFailedIndex;
+    /**
+     * Идентификатор текущего/последнего запуска. Генерируется заново в начале run() и rerunStep()
+     * (на все попытки внутри одного run(), включая pipelineRetry, — один и тот же runId).
+     * Используется для корреляции событий/логов/метрик одного запуска во внешних системах.
+     */
+    private _runId;
     /** Cleanup-функции плагинов */
     private _pluginCleanups;
     constructor(params: {
@@ -81,6 +87,7 @@ export declare class PipelineOrchestrator<TKeys extends string = string> {
         message: string;
         data?: any;
         timestamp: Date;
+        runId?: string;
     }[];
     /** Возвращает синхронный снимок результатов всех шагов. */
     getStageResults(): Record<string, PipelineStepResult>;
@@ -91,6 +98,9 @@ export declare class PipelineOrchestrator<TKeys extends string = string> {
     importState(state: PipelineExportedState): void;
     abort(): void;
     isAborted(): boolean;
+    /** Идентификатор текущего/последнего запуска (run() или rerunStep()). Пустая строка, если ничего не выполнялось. */
+    getRunId(): string;
+    private _generateRunId;
     private emit;
     private notifyStageResults;
     private addLog;
@@ -105,9 +115,19 @@ export declare class PipelineOrchestrator<TKeys extends string = string> {
      * Единственная точка реализации логики шага — используется и в run(), и в rerunStep().
      */
     private executeStage;
+    /** Зафиксировать успешный результат шага: запись в stageResults, метрики, persist, middleware, события. */
+    private _commitStepSuccess;
+    /** Зафиксировать ошибку шага: запись в stageResults, метрики, middleware, события. */
+    private _commitStepError;
     private executeStreamStage;
     private executeSubPipeline;
     private findStageByKey;
+    /**
+     * Выполнить worker для каждого элемента items с ограничением одновременных выполнений (limit).
+     * Без limit (undefined/0/>= items.length) ведёт себя как Promise.all — все элементы стартуют сразу.
+     * Результаты возвращаются в исходном порядке items независимо от порядка завершения.
+     */
+    private _runPooled;
     private _runOnce;
     run(onStepPause?: (stepIndex: number, stepResult: unknown, stageResults: Record<string, PipelineStepResult>) => Promise<unknown> | unknown, externalSignal?: AbortSignal): Promise<PipelineResult>;
     /**

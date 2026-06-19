@@ -7,3 +7,4 @@ export * from "./progress-tracker";
 export * from "./pipeline-orchestrator";
 export * from "./pipeline-builder";
 export * from "./pipeline-validator";
+export * from "./circuit-breaker";

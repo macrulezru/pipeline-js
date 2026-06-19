@@ -61,6 +61,21 @@ export class TtlCache {
     delete(key) {
         this.store.delete(key);
     }
+    /** Итератор по всем ключам кэша (включая потенциально устаревшие — не фильтрует по TTL). */
+    keys() {
+        return this.store.keys();
+    }
+    /** Удаляет все записи, для которых predicate(key) вернул true. Возвращает количество удалённых записей. */
+    deleteWhere(predicate) {
+        let count = 0;
+        for (const key of [...this.store.keys()]) {
+            if (predicate(key)) {
+                this.store.delete(key);
+                count++;
+            }
+        }
+        return count;
+    }
     clear() {
         this.store.clear();
     }

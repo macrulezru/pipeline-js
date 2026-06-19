@@ -23,3 +23,4 @@ __exportStar(require("./progress-tracker"), exports);
 __exportStar(require("./pipeline-orchestrator"), exports);
 __exportStar(require("./pipeline-builder"), exports);
 __exportStar(require("./pipeline-validator"), exports);
+__exportStar(require("./circuit-breaker"), exports);

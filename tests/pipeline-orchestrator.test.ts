@@ -1,4 +1,5 @@
 import { PipelineOrchestrator } from "../src/pipeline-orchestrator";
+import { recoverStep } from "../src/types";
 import type { PipelineConfig } from "../src/types";
 
 const httpConfig = { baseURL: "http://localhost" };
@@ -1159,6 +1160,284 @@ describe("SubPipeline", () => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // getStageResults() (Категория 3.2)
+// ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// AbortSignal в хуках шага
+// ─────────────────────────────────────────────────────────────────────────────
+describe("signal в хуках шага", () => {
+  it("request/before/after/condition получают AbortSignal", async () => {
+    const seen: AbortSignal[] = [];
+    const config: PipelineConfig = {
+      stages: [
+        {
+          key: "step1",
+          condition: ({ signal }) => {
+            seen.push(signal);
+            return true;
+          },
+          before: ({ signal }) => {
+            seen.push(signal);
+          },
+          request: async ({ signal }) => {
+            seen.push(signal);
+            return "ok";
+          },
+          after: ({ result, signal }) => {
+            seen.push(signal);
+            return result;
+          },
+        },
+      ],
+    };
+    const o = new PipelineOrchestrator({ config, httpConfig });
+    await o.run();
+    expect(seen.length).toBe(4);
+    expect(seen.every((s) => s instanceof AbortSignal)).toBe(true);
+    expect(new Set(seen).size).toBe(1); // один и тот же сигнал во всех хуках
+  });
+
+  it("signal.aborted становится true после abort() внутри длительного request", async () => {
+    let abortedSeenInRequest = false;
+    const config: PipelineConfig = {
+      stages: [
+        {
+          key: "slow",
+          request: async ({ signal }) => {
+            await new Promise((r) => setTimeout(r, 50));
+            abortedSeenInRequest = signal.aborted;
+            return "done";
+          },
+        },
+      ],
+    };
+    const o = new PipelineOrchestrator({ config, httpConfig });
+    setTimeout(() => o.abort(), 10);
+    await o.run();
+    expect(abortedSeenInRequest).toBe(true);
+  });
+
+  it("errorHandler получает signal", async () => {
+    let receivedSignal: AbortSignal | undefined;
+    const config: PipelineConfig = {
+      stages: [
+        {
+          key: "step1",
+          request: async () => {
+            throw new Error("fail");
+          },
+          errorHandler: ({ signal }) => {
+            receivedSignal = signal;
+            return new Error("handled");
+          },
+        },
+      ],
+    };
+    const o = new PipelineOrchestrator({ config, httpConfig });
+    await o.run();
+    expect(receivedSignal).toBeInstanceOf(AbortSignal);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// errorHandler recovery (recoverStep)
+// ─────────────────────────────────────────────────────────────────────────────
+describe("errorHandler recovery (recoverStep)", () => {
+  it("errorHandler с recoverStep() восстанавливает шаг как success", async () => {
+    const config: PipelineConfig = {
+      stages: [
+        {
+          key: "step1",
+          request: async () => {
+            throw new Error("boom");
+          },
+          errorHandler: () => recoverStep("fallback-value"),
+        },
+        { key: "step2", request: async ({ prev }) => `${prev}-next` },
+      ],
+    };
+    const o = new PipelineOrchestrator({ config, httpConfig });
+    const result = await o.run();
+    expect(result.success).toBe(true);
+    expect(result.stageResults.step1.status).toBe("success");
+    expect(result.stageResults.step1.data).toBe("fallback-value");
+    expect(result.stageResults.step2.data).toBe("fallback-value-next");
+  });
+
+  it("восстановленный шаг эмитирует step:success, а не step:error", async () => {
+    const events: string[] = [];
+    const config: PipelineConfig = {
+      stages: [
+        {
+          key: "step1",
+          request: async () => {
+            throw new Error("boom");
+          },
+          errorHandler: () => recoverStep(0),
+        },
+      ],
+    };
+    const o = new PipelineOrchestrator({ config, httpConfig });
+    o.on("step:step1:success", () => events.push("success"));
+    o.on("step:step1:error", () => events.push("error"));
+    await o.run();
+    expect(events).toEqual(["success"]);
+  });
+
+  it("errorHandler без recover-формы продолжает считать шаг ошибкой (обратная совместимость)", async () => {
+    const config: PipelineConfig = {
+      stages: [
+        {
+          key: "step1",
+          request: async () => {
+            throw new Error("boom");
+          },
+          errorHandler: ({ error }) => new Error(`wrapped: ${(error as Error).message}`),
+        },
+      ],
+    };
+    const o = new PipelineOrchestrator({ config, httpConfig });
+    const result = await o.run();
+    expect(result.success).toBe(false);
+    expect(result.stageResults.step1.status).toBe("error");
+    expect(result.stageResults.step1.error?.message).toBe("wrapped: boom");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// concurrency limit для ParallelStageGroup
+// ─────────────────────────────────────────────────────────────────────────────
+describe("ParallelStageGroup.concurrency", () => {
+  it("без concurrency запускает все шаги сразу (как раньше)", async () => {
+    let maxActive = 0;
+    let active = 0;
+    const make = (key: string) => ({
+      key,
+      request: async () => {
+        active++;
+        maxActive = Math.max(maxActive, active);
+        await new Promise((r) => setTimeout(r, 10));
+        active--;
+        return key;
+      },
+    });
+    const config: PipelineConfig = {
+      stages: [
+        { key: "group", parallel: [make("a"), make("b"), make("c"), make("d")] },
+      ],
+    };
+    const o = new PipelineOrchestrator({ config, httpConfig });
+    await o.run();
+    expect(maxActive).toBe(4);
+  });
+
+  it("с concurrency ограничивает число одновременных выполнений", async () => {
+    let maxActive = 0;
+    let active = 0;
+    const make = (key: string) => ({
+      key,
+      request: async () => {
+        active++;
+        maxActive = Math.max(maxActive, active);
+        await new Promise((r) => setTimeout(r, 10));
+        active--;
+        return key;
+      },
+    });
+    const config: PipelineConfig = {
+      stages: [
+        {
+          key: "group",
+          parallel: [make("a"), make("b"), make("c"), make("d")],
+          concurrency: 2,
+        },
+      ],
+    };
+    const o = new PipelineOrchestrator({ config, httpConfig });
+    const result = await o.run();
+    expect(maxActive).toBeLessThanOrEqual(2);
+    expect(result.success).toBe(true);
+    expect(result.stageResults.a.data).toBe("a");
+    expect(result.stageResults.d.data).toBe("d");
+  });
+
+  it("сохраняет порядок результатов независимо от порядка завершения при ограниченной конкурентности", async () => {
+    const config: PipelineConfig = {
+      stages: [
+        {
+          key: "group",
+          parallel: [
+            { key: "slow", request: async () => { await new Promise((r) => setTimeout(r, 30)); return "slow"; } },
+            { key: "fast", request: async () => "fast" },
+          ],
+          concurrency: 1,
+        },
+      ],
+    };
+    const o = new PipelineOrchestrator({ config, httpConfig });
+    const result = await o.run();
+    expect(result.stageResults.slow.data).toBe("slow");
+    expect(result.stageResults.fast.data).toBe("fast");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// runId (трейсинг)
+// ─────────────────────────────────────────────────────────────────────────────
+describe("runId", () => {
+  it("getRunId() пуст до первого запуска", () => {
+    const config: PipelineConfig = { stages: [{ key: "a", request: async () => 1 }] };
+    const o = new PipelineOrchestrator({ config, httpConfig });
+    expect(o.getRunId()).toBe("");
+  });
+
+  it("run() генерирует runId, доступный через getRunId() и в metrics", async () => {
+    const seenRunIds: string[] = [];
+    const config: PipelineConfig = {
+      stages: [{ key: "a", request: async () => 1 }],
+      metrics: {
+        onPipelineStart: ({ runId }) => seenRunIds.push(runId),
+        onPipelineEnd: ({ runId }) => seenRunIds.push(runId),
+        onStepDuration: ({ runId }) => seenRunIds.push(runId),
+      },
+    };
+    const o = new PipelineOrchestrator({ config, httpConfig });
+    await o.run();
+    expect(o.getRunId()).not.toBe("");
+    expect(seenRunIds.every((id) => id === o.getRunId())).toBe(true);
+  });
+
+  it("разные run() дают разные runId", async () => {
+    const config: PipelineConfig = { stages: [{ key: "a", request: async () => 1 }] };
+    const o = new PipelineOrchestrator({ config, httpConfig });
+    await o.run();
+    const first = o.getRunId();
+    await o.run();
+    const second = o.getRunId();
+    expect(first).not.toBe(second);
+  });
+
+  it("PipelineStepEvent и логи содержат текущий runId", async () => {
+    let eventRunId: string | undefined;
+    const config: PipelineConfig = {
+      stages: [{ key: "a", request: async () => 1 }],
+    };
+    const o = new PipelineOrchestrator({ config, httpConfig });
+    o.on("step:a:success", (e) => { eventRunId = e.runId; });
+    await o.run();
+    expect(eventRunId).toBe(o.getRunId());
+    expect(o.getLogs().every((l) => (l as any).runId === o.getRunId())).toBe(true);
+  });
+
+  it("rerunStep() генерирует собственный runId, отличный от исходного run()", async () => {
+    const config: PipelineConfig = { stages: [{ key: "a", request: async () => 1 }] };
+    const o = new PipelineOrchestrator({ config, httpConfig });
+    await o.run();
+    const runRunId = o.getRunId();
+    await o.rerunStep("a");
+    expect(o.getRunId()).not.toBe(runRunId);
+  });
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 describe("getStageResults()", () => {
   it("возвращает синхронный снимок результатов", async () => {
