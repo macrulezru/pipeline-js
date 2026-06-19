@@ -23,12 +23,15 @@ Flexible, modular pipeline orchestrator for REST APIs — sequential and paralle
 - [Auth Provider](#auth-provider)
 - [Log Sanitization](#log-sanitization)
 - [RequestExecutor](#requestexecutor)
+- [Circuit breaker](#circuit-breaker)
 - [PipelineOrchestrator](#pipelineorchestrator)
+- [Error recovery (errorHandler + recoverStep)](#error-recovery-errorhandler--recoverstep)
 - [Parallel stages](#parallel-stages)
 - [Global middleware](#global-middleware)
 - [Pause / Resume](#pause--resume)
 - [Export / Import state](#export--import-state)
 - [Pipeline metrics](#pipeline-metrics)
+- [Correlating a run (runId)](#correlating-a-run-runid)
 - [createPipeline() + pipe() builder](#createpipeline--pipe-builder)
 - [validatePipelineConfig()](#validatepipelineconfig)
 - [Plugin system](#plugin-system)
@@ -45,15 +48,16 @@ Flexible, modular pipeline orchestrator for REST APIs — sequential and paralle
 
 ## Features
 
-- **`createRestClient()`** — full-featured HTTP client built on top of axios: retry with exponential backoff and `Retry-After` support, response caching for GET requests, rate limiting (concurrency + req/interval), auth provider with automatic 401 refresh, request cancellation by key, custom HTTP adapters
-- **`PipelineOrchestrator`** — sequential and parallel stage execution; each stage has `condition`, `before`, `request`, `after`, `errorHandler` hooks; `sharedData` pool shared across all stages
+- **`createRestClient()`** — full-featured HTTP client built on top of axios: retry with exponential backoff and `Retry-After` support, response caching (incl. targeted `invalidateCache()`), rate limiting (concurrency + req/interval), circuit breaker, auth provider with automatic 401 refresh and optional token caching, request cancellation by key, custom HTTP adapters
+- **`PipelineOrchestrator`** — sequential and parallel stage execution; each stage has `condition`, `before`, `request`, `after`, `errorHandler` hooks (all receive the pipeline's `AbortSignal`); `sharedData` pool shared across all stages
+- **Error recovery** — `errorHandler` can return `recoverStep(data)` to turn a failed stage back into a successful one and keep the pipeline going, instead of only transforming the error
 - **Global middleware** — `beforeEach` / `afterEach` / `onError` hooks that apply to every stage without modifying individual configs
-- **Parallel groups** — multiple stages run concurrently via `Promise.all`; single failure stops the group
-- **Pause / Resume / Abort** — `pause()` waits after the current stage; `resume()` continues; `abort()` cancels the current HTTP request via `AbortController`
+- **Parallel groups** — multiple stages run concurrently via `Promise.all`, or through a bounded pool via `concurrency`; single failure stops the group
+- **Pause / Resume / Abort** — `pause()` waits after the current stage; `resume()` continues; `abort()` cancels the current HTTP request and propagates its `AbortSignal` into every stage hook so custom `request`/`before`/`after` functions can cancel their own work too
 - **Export / Import state** — serialize `stageResults` + logs to a plain object; restore on the next page load
 - **Stream stages** — `stream: async function*` for SSE / any `AsyncIterable`; `onChunk` callback in real time; abort-aware
-- **Pipeline metrics** — `onPipelineStart`, `onPipelineEnd`, `onStepDuration` callbacks without touching stage logic
-- **`createPipeline()` / `pipe()` builder** — short factory and fluent builder API for common patterns
+- **Pipeline metrics & run correlation** — `onPipelineStart`, `onPipelineEnd`, `onStepDuration` callbacks, plus a `runId` (also on `getRunId()`, log entries, and step events) shared by every callback/event from the same run
+- **`createPipeline()` / `pipe()` builder** — short factory and fluent builder API for common patterns; in TypeScript, `pipe().step()` chains infer `prev`'s type from the previous step automatically
 - **`validatePipelineConfig()`** — catch duplicate keys, empty keys, type errors before runtime
 - **Plugin system** — install reusable behavior (logging, analytics, etc.); cleanup via `destroy()`
 - **Persist adapter** — pluggable save/load interface; auto-save after each stage
@@ -168,7 +172,9 @@ Creates a REST client with advanced HTTP features.
 | `request(url, config?)`                 | Generic request                    |
 | `cancellableRequest(key, url, config?)` | Request cancellable by key         |
 | `cancelRequest(key)`                    | Cancel request by key              |
-| `clearCache()`                          | Clear this client's response cache |
+| `clearCache()`                          | Clear this client's entire response cache |
+| `invalidateCache(matcher)`               | Clear only cache entries whose URL matches `matcher` (substring, `RegExp`, or `(info) => boolean`); returns the number of entries removed |
+| `getCircuitBreakerState()`              | `"closed" \| "open" \| "half-open"`, or `null` if `circuitBreaker` isn't configured |
 
 ### HttpConfig options
 
@@ -190,11 +196,13 @@ Creates a REST client with advanced HTTP features.
 | `rateLimit.intervalMs`             | Time window size in ms                                                           |
 | `metrics.onRequestStart`           | Callback on request start                                                        |
 | `metrics.onRequestEnd`             | Callback on request end (includes duration and bytes)                            |
-| `auth.getToken`                    | Async function returning a Bearer token (called before every request)            |
+| `auth.getToken`                    | Async function returning a Bearer token (called before every request, unless `auth.tokenTtlMs` is set) |
 | `auth.onUnauthorized`              | Optional async callback on 401 — refresh the token here; request is retried once |
+| `auth.tokenTtlMs`                  | Cache `getToken()`'s result for this many ms instead of calling it before every request; invalidated automatically on 401 |
 | `sanitizeHeaders`                  | Mask sensitive headers in metrics callbacks (default: `false`)                   |
 | `sensitiveHeaders`                 | Additional headers to mask (extends `DEFAULT_SENSITIVE_HEADERS`)                 |
 | `adapter`                          | Custom HTTP adapter (e.g. native `fetch`) — replaces built-in axios              |
+| `circuitBreaker`                   | See [Circuit breaker](#circuit-breaker) — `{ failureThreshold, openMs, successThreshold?, isFailure? }` |
 
 ### Per-request cache override
 
@@ -204,6 +212,18 @@ const res = await client.get("/data", {
   cacheTtlMs: 30000,
   cacheKey: "my-custom-key",
 });
+```
+
+### Targeted cache invalidation
+
+`clearCache()` wipes the entire response cache. To invalidate only the entries affected by a mutation (e.g. after a `POST`/`PUT`/`DELETE`), use `invalidateCache()` instead — it accepts a substring, a `RegExp`, or a predicate over `{ method, url }`, and returns how many entries were removed:
+
+```js
+await client.post("/users/1/orders", newOrder);
+
+client.invalidateCache("/users/1"); // substring match on the cached URL
+client.invalidateCache(/^https:\/\/api\.example\.com\/users\/\d+$/);
+client.invalidateCache(({ method, url }) => method === "GET" && url.includes("/orders"));
 ```
 
 ### Full example
@@ -267,6 +287,21 @@ const client = createRestClient({
 
 // Authorization: Bearer <token> is added automatically to every request
 const res = await client.get("/profile");
+```
+
+### Caching the token
+
+If `getToken()` is expensive (e.g. it talks to a secure storage or refresh endpoint), set `tokenTtlMs` to reuse the result across requests instead of calling `getToken()` before every single one. The cache is invalidated automatically on a `401`, so the next request always re-fetches a fresh token before retrying:
+
+```js
+const client = createRestClient({
+  baseURL: "https://api.example.com",
+  auth: {
+    getToken: async () => requestTokenFromSecureEnclave(), // expensive
+    onUnauthorized: async () => refreshAccessToken(),
+    tokenTtlMs: 5 * 60_000, // reuse for up to 5 minutes
+  },
+});
 ```
 
 ---
@@ -334,6 +369,41 @@ When the server returns a `Retry-After` header (numeric seconds or HTTP-date), t
 
 ---
 
+## Circuit breaker
+
+Protect a failing backend (and your own app) from piling up retries/timeouts: after `failureThreshold` consecutive failures, the client stops calling the network entirely for `openMs` and rejects requests immediately with a `CircuitOpenError` (`code: "CIRCUIT_OPEN"`). After `openMs`, it lets a probe request through (`half-open`); success closes the circuit again, failure re-opens it.
+
+```js
+import { createRestClient, CircuitOpenError } from "rest-pipeline-js";
+
+const client = createRestClient({
+  baseURL: "https://api.example.com",
+  circuitBreaker: {
+    failureThreshold: 5, // open after 5 consecutive failures
+    openMs: 30_000, // stay open for 30s before probing again
+    successThreshold: 2, // need 2 successful probes to fully close
+    isFailure: (error) => error.status === undefined || error.status >= 500, // ignore 4xx
+  },
+});
+
+try {
+  await client.get("/flaky-endpoint");
+} catch (err) {
+  if (err instanceof CircuitOpenError) {
+    // rejected locally — no network call was made
+  }
+}
+
+client.getCircuitBreakerState(); // "closed" | "open" | "half-open"
+```
+
+- Works on top of retry, cache, rate limiting, auth, and custom `adapter`s — it sits around the actual network call, same as those features.
+- Each retry attempt (from `RequestExecutor`/`request.retry`) counts as its own pass through the breaker, so a flaky endpoint with retries enabled opens the circuit faster, not slower.
+- Cancelled/aborted requests are never counted as failures.
+- Not set by default — without `circuitBreaker`, behavior is unchanged.
+
+---
+
 ## PipelineOrchestrator
 
 Main class for building and managing a pipeline of sequential (and parallel) stages.
@@ -363,6 +433,7 @@ new PipelineOrchestrator({
 | `exportState()`                            | Serialize stageResults and logs to a plain object                                     |
 | `importState(state)`                       | Restore stageResults and logs from a snapshot                                         |
 | `getStageResults()`                        | Synchronous snapshot of all stage results                                             |
+| `getRunId()`                               | ID of the current/last `run()` or `rerunStep()` — see [Correlating a run](#correlating-a-run-runid) |
 | `destroy()`                                | Run cleanup callbacks from all installed plugins                                      |
 | `subscribeProgress(listener)`              | Subscribe to progress updates                                                         |
 | `subscribeStageResults(listener)`          | Subscribe to stageResults changes                                                     |
@@ -375,18 +446,37 @@ new PipelineOrchestrator({
 
 ### Stage parameters (PipelineStageConfig)
 
-| Parameter                                     | Description                                                              |
-| --------------------------------------------- | ------------------------------------------------------------------------ |
-| `key`                                         | Unique stage identifier                                                  |
-| `request({ prev, allResults, sharedData })`   | Main stage function — return value becomes the stage result              |
-| `condition({ prev, allResults, sharedData })` | If returns `false`, stage is skipped with status `"skipped"`             |
-| `before({ prev, allResults, sharedData })`    | Pre-processing hook — returned value replaces `prev` passed to `request` |
-| `after({ result, allResults, sharedData })`   | Post-processing hook — returned value replaces the stage result          |
-| `errorHandler({ error, key, sharedData })`    | Per-stage error handler                                                  |
-| `retryCount`                                  | Override retry count for this stage                                      |
-| `timeoutMs`                                   | Override timeout for this stage                                          |
-| `pauseBefore`                                 | Delay in ms before executing `request`                                   |
-| `pauseAfter`                                  | Delay in ms after executing `request`                                    |
+Every hook below also receives `signal: AbortSignal` in its params object — the same signal used by `orchestrator.abort()`. Pass it down to `fetch`/`axios`/etc. inside `request`/`before`/`after` so cancellation actually stops in-flight work, not just the pipeline's bookkeeping.
+
+| Parameter                                             | Description                                                              |
+| ------------------------------------------------------ | ------------------------------------------------------------------------ |
+| `key`                                                  | Unique stage identifier                                                  |
+| `request({ prev, allResults, sharedData, signal })`   | Main stage function — return value becomes the stage result              |
+| `condition({ prev, allResults, sharedData, signal })` | If returns `false`, stage is skipped with status `"skipped"`             |
+| `before({ prev, allResults, sharedData, signal })`    | Pre-processing hook — returned value replaces `prev` passed to `request` |
+| `after({ result, allResults, sharedData, signal })`   | Post-processing hook — returned value replaces the stage result          |
+| `errorHandler({ error, key, sharedData, signal })`    | Per-stage error handler — see [Error recovery](#error-recovery-errorhandler--recoverstep) below |
+| `retryCount`                                           | Override retry count for this stage                                      |
+| `timeoutMs`                                            | Override timeout for this stage                                          |
+| `pauseBefore`                                          | Delay in ms before executing `request`                                   |
+| `pauseAfter`                                           | Delay in ms after executing `request`                                    |
+
+### Error recovery (`errorHandler` + `recoverStep`)
+
+By default, whatever `errorHandler` returns is wrapped into an `ApiError` and the stage stays `"error"` — it can transform/enrich the error but not turn the failure into a success. Return `recoverStep(data)` to recover the stage instead: it's committed exactly like a successful stage (status `"success"`, `afterEach` middleware, metrics, persistence) and the pipeline continues normally.
+
+```js
+import { recoverStep } from "rest-pipeline-js";
+
+{
+  key: "fetchPrice",
+  request: async () => fetchPriceFromApi(),
+  errorHandler: ({ error }) => {
+    if (isNetworkError(error)) return recoverStep(0); // fall back to a default and continue
+    return error; // anything else: keep failing as before
+  },
+}
+```
 
 ### Stage execution flow
 
@@ -410,7 +500,9 @@ middleware.afterEach
 [status: success] → next stage
 
 On error at any point:
-  └─► stage.errorHandler (if set) → middleware.onError → [status: error] → stop
+  └─► stage.errorHandler (if set)
+        ├─► returns recoverStep(data) → [status: success] → next stage
+        └─► otherwise → middleware.onError → [status: error] → stop
 ```
 
 ### Full example
@@ -501,10 +593,27 @@ const orchestrator = new PipelineOrchestrator({
 });
 ```
 
-- All stages in a `parallel` group run simultaneously via `Promise.all`.
+- All stages in a `parallel` group run simultaneously via `Promise.all` — unless `concurrency` is set (see below).
 - If **any** stage in the group fails, the pipeline stops and marks `success: false`.
 - Each parallel stage has its own key and result in `stageResults`.
 - `rerunStep(key)` works for stages inside parallel groups too.
+
+### Limiting concurrency
+
+For fan-out over many items (e.g. paginated fetches), set `concurrency` on the group to cap how many stages run at once instead of starting all of them immediately:
+
+```js
+{
+  key: "fetch-all-pages",
+  parallel: pageNumbers.map((n) => ({
+    key: `page-${n}`,
+    request: async () => fetchPage(n),
+  })),
+  concurrency: 5, // at most 5 requests in flight at a time
+}
+```
+
+Results land in `stageResults` under their own key regardless of `concurrency`, in the same shape as an unlimited group. With the `pipe()` builder: `.parallel(stages, { concurrency: 5 })`.
 
 ---
 
@@ -600,25 +709,33 @@ const orchestrator = new PipelineOrchestrator({
       /* ... */
     ],
     metrics: {
-      onPipelineStart: ({ timestamp }) => {
-        console.log("Pipeline started at", new Date(timestamp).toISOString());
+      onPipelineStart: ({ timestamp, runId }) => {
+        console.log(`[${runId}] Pipeline started at`, new Date(timestamp).toISOString());
       },
-      onPipelineEnd: ({ durationMs, success, stageResults }) => {
-        analytics.track("pipeline_complete", { durationMs, success });
+      onPipelineEnd: ({ durationMs, success, stageResults, runId }) => {
+        analytics.track("pipeline_complete", { durationMs, success, runId });
       },
-      onStepDuration: ({ stepKey, durationMs, status }) => {
-        console.log(`[${stepKey}] ${status} in ${durationMs}ms`);
+      onStepDuration: ({ stepKey, durationMs, status, runId }) => {
+        console.log(`[${runId}] [${stepKey}] ${status} in ${durationMs}ms`);
       },
     },
   },
 });
 ```
 
-| Callback          | Receives                                | Description                       |
-| ----------------- | --------------------------------------- | --------------------------------- |
-| `onPipelineStart` | `{ timestamp }`                         | Fires at the beginning of `run()` |
-| `onPipelineEnd`   | `{ durationMs, success, stageResults }` | Fires when `run()` completes      |
-| `onStepDuration`  | `{ stepKey, durationMs, status }`       | Fires after every executed step   |
+| Callback          | Receives                                         | Description                       |
+| ----------------- | ------------------------------------------------- | --------------------------------- |
+| `onPipelineStart` | `{ timestamp, runId }`                            | Fires at the beginning of `run()` |
+| `onPipelineEnd`   | `{ durationMs, success, stageResults, runId }`     | Fires when `run()` completes      |
+| `onStepDuration`  | `{ stepKey, durationMs, status, runId }`           | Fires after every executed step   |
+
+### Correlating a run (`runId`)
+
+Every `run()` call generates a fresh `runId` (a UUID, or a timestamp-based fallback in environments without `crypto.randomUUID`), shared by all metrics callbacks, log entries (`getLogs()`), and step events (`PipelineStepEvent.runId`) produced during that run — including all attempts of `pipelineRetry`. `rerunStep()` generates its own separate `runId`. Use `orchestrator.getRunId()` to read the current/last one, or read `runId` off any event/log/metrics callback to correlate everything that happened during one execution in your logging/tracing backend:
+
+```js
+orchestrator.on("log", (entry) => sendToLogBackend({ ...entry, runId: orchestrator.getRunId() }));
+```
 
 ---
 
@@ -671,11 +788,25 @@ const orchestrator = pipe()
 | Builder method                | Description                                              |
 | ----------------------------- | -------------------------------------------------------- |
 | `.step(stage)`                | Add a sequential stage                                   |
-| `.parallel(stages, options?)` | Add a parallel group (`key` auto-generated if omitted)   |
+| `.parallel(stages, options?)` | Add a parallel group (`key`/`concurrency` optional, see [Limiting concurrency](#limiting-concurrency)) |
 | `.subPipeline(item)`          | Embed a sub-pipeline as a stage                          |
 | `.stream(stage)`              | Add a stream stage (AsyncIterable)                       |
 | `.build(options?)`            | Create and return a `PipelineOrchestrator`               |
 | `.toConfig(options?)`         | Return `PipelineConfig` without creating an orchestrator |
+
+#### Typed chaining (TypeScript)
+
+In TypeScript, `pipe().step(...)` tracks the type of `prev` across the chain: each `.step()`'s `prev` is typed as the previous step's return value (`undefined` for the very first step, matching the orchestrator's actual runtime behavior). `.parallel()` / `.subPipeline()` / `.stream()` don't change it — exactly like at runtime, where `prev` for the next step still comes from the last regular `.step()`, not from a parallel group's results:
+
+```ts
+const orchestrator = pipe()
+  .step({ key: "auth", request: async (): Promise<string> => getToken() })
+  .step({ key: "fetchUser", request: async ({ prev }) => fetchUser(prev) }) // prev: string — inferred, autocompletes
+  .step({ key: "oops", request: async ({ prev }) => prev.totallyNotAMethod() }) // ✗ compile error: wrong type for prev
+  .build();
+```
+
+This works whether or not you keep reassigning the chain (`builder.step(...)` without capturing the return value still mutates the same instance, just like before) — the typing is purely additive and doesn't change runtime behavior.
 
 ---
 
@@ -848,6 +979,8 @@ type HttpAdapter = {
 };
 ```
 
+When `adapter` is set, `createRestClient()` never calls `axios.create()` — the built-in axios instance simply isn't constructed, so adapter-only usage (e.g. in Cloudflare Workers / Deno) doesn't pay for it.
+
 ---
 
 ## Vue integration
@@ -989,7 +1122,8 @@ rest-pipeline-js
 │     ├── RequestExecutor      — retry + backoff + Retry-After + AbortController timeout
 │     ├── CacheManager         — in-memory TTL cache for GET responses
 │     ├── RateLimiter          — concurrency + req/interval sliding window
-│     ├── AuthProvider         — Bearer injection; 401 refresh + one retry
+│     ├── CircuitBreaker       — closed → open → half-open; rejects locally when open
+│     ├── AuthProvider         — Bearer injection; 401 refresh + one retry; optional tokenTtlMs cache
 │     ├── MetricsCollector     — onRequestStart / onRequestEnd callbacks
 │     ├── HeaderSanitizer      — masks sensitive headers before metrics callbacks
 │     └── HttpAdapter          — pluggable transport (default: axios; swap for fetch / edge)

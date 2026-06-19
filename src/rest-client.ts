@@ -2,6 +2,7 @@ import axios from "axios";
 
 import { TtlCache } from "./cache";
 import { RateLimiter } from "./rate-limiter";
+import { CircuitBreaker, CircuitOpenError } from "./circuit-breaker";
 import type {
   HttpConfig,
   ApiError,
@@ -106,12 +107,16 @@ export function clearRestClientCache(): void {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function createRestClient(config: HttpConfig) {
-  const httpClient: AxiosInstance = axios.create({
-    baseURL: config.baseURL,
-    timeout: config.timeout,
-    headers: config.headers,
-    withCredentials: config.withCredentials,
-  });
+  // Если задан кастомный adapter — встроенный axios-инстанс не создаётся вообще
+  // (экономит инициализацию и не требует axios для edge/serverless окружений).
+  const httpClient: AxiosInstance | undefined = config.adapter
+    ? undefined
+    : axios.create({
+        baseURL: config.baseURL,
+        timeout: config.timeout,
+        headers: config.headers,
+        withCredentials: config.withCredentials,
+      });
 
   // --- Кэш ответов ---
   const responseCache = new TtlCache<string, ApiResponse<any>>(1000);
@@ -119,6 +124,11 @@ export function createRestClient(config: HttpConfig) {
   // --- Rate limiter ---
   const rateLimiter = config.rateLimit
     ? new RateLimiter(config.rateLimit)
+    : null;
+
+  // --- Circuit breaker ---
+  const circuitBreaker = config.circuitBreaker
+    ? new CircuitBreaker(config.circuitBreaker)
     : null;
 
   // --- Sanitization helpers ---
@@ -136,6 +146,25 @@ export function createRestClient(config: HttpConfig) {
 
   // --- In-flight deduplication map ---
   const inFlightRequests = new Map<string, Promise<ApiResponse<any>>>();
+
+  // --- Auth: кэш токена (если задан auth.tokenTtlMs) ---
+  let cachedToken: { value: string; expiresAt: number } | null = null;
+
+  function invalidateTokenCache(): void {
+    cachedToken = null;
+  }
+
+  async function getAuthToken(): Promise<string> {
+    const auth = config.auth!;
+    if (auth.tokenTtlMs && cachedToken && Date.now() < cachedToken.expiresAt) {
+      return cachedToken.value;
+    }
+    const token = await auth.getToken();
+    if (auth.tokenTtlMs) {
+      cachedToken = { value: token, expiresAt: Date.now() + auth.tokenTtlMs };
+    }
+    return token;
+  }
 
   function maybeSanitize(
     headers: Record<string, string> | undefined,
@@ -158,6 +187,27 @@ export function createRestClient(config: HttpConfig) {
     });
   }
 
+  /**
+   * Точечная инвалидация кэша ответов: удаляет только записи, чей URL совпадает
+   * с matcher (подстрока, RegExp или предикат), а не весь кэш целиком.
+   * Полезно вызывать после мутирующих запросов (POST/PUT/DELETE) для связанных GET-эндпоинтов.
+   */
+  function invalidateCache(
+    matcher: string | RegExp | ((info: { method: string; url: string }) => boolean),
+  ): number {
+    return responseCache.deleteWhere((key) => {
+      let parsed: { method: string; url: string };
+      try {
+        parsed = JSON.parse(key);
+      } catch {
+        return false;
+      }
+      if (typeof matcher === "function") return matcher(parsed);
+      if (matcher instanceof RegExp) return matcher.test(parsed.url);
+      return parsed.url.includes(matcher);
+    });
+  }
+
   // ── Внутренняя логика одного HTTP-запроса (без dedup-обёртки) ──────────────
   // _retried — внутренний флаг, предотвращает бесконечную петлю при 401-retry
   async function _executeRequest<T = unknown>(
@@ -169,10 +219,26 @@ export function createRestClient(config: HttpConfig) {
     const methodUpper = (req?.method ?? "GET").toUpperCase();
     const fullUrl = `${config.baseURL ?? ""}${command}`;
 
-    // --- Auth: получаем токен и инжектируем заголовок ---
+    // --- Circuit breaker: отклоняем без обращения к сети/auth, если circuit открыт ---
+    if (circuitBreaker && !circuitBreaker.canExecute()) {
+      const apiError = toApiError(new CircuitOpenError());
+      config.metrics?.onRequestStart?.({
+        id: reqId,
+        method: methodUpper,
+        url: fullUrl,
+        timestamp: Date.now(),
+        requestBody: req?.data,
+        requestParams: req?.params,
+      });
+      config.metrics?.onRequestEnd?.({ id: reqId, durationMs: 0, error: apiError });
+      if (config.onError) await config.onError(apiError, req ?? {});
+      throw new CircuitOpenError();
+    }
+
+    // --- Auth: получаем токен (из кэша, если auth.tokenTtlMs задан) и инжектируем заголовок ---
     let authHeaders: Record<string, string> = {};
     if (config.auth) {
-      const token = await config.auth.getToken();
+      const token = await getAuthToken();
       authHeaders = { Authorization: `Bearer ${token}` };
     }
 
@@ -219,7 +285,7 @@ export function createRestClient(config: HttpConfig) {
         });
       } else {
         // ── Default: axios ───────────────────────────────────────────────
-        const response: AxiosResponse<T> = await httpClient.request<T>({
+        const response: AxiosResponse<T> = await httpClient!.request<T>({
           url: command,
           ...processedReq,
           headers: processedReq?.headers,
@@ -289,6 +355,7 @@ export function createRestClient(config: HttpConfig) {
         responseCache.set(cacheKey, payload, cacheTtl);
       }
 
+      circuitBreaker?.onSuccess();
       return payload;
     } catch (error: unknown) {
       const duration = Date.now() - startTs;
@@ -298,6 +365,7 @@ export function createRestClient(config: HttpConfig) {
         ? error.response?.status
         : (error as any)?.status;
       if (config.auth && !_retried && errorStatus === 401) {
+        invalidateTokenCache();
         await config.auth.onUnauthorized?.();
         // Повторяем с флагом _retried=true — второй 401 уже не будет перехвачен
         return _executeRequest<T>(command, req, true);
@@ -308,6 +376,13 @@ export function createRestClient(config: HttpConfig) {
       // --- Error interceptors ---
       if (errInterceptors.length > 0) {
         apiError = await applyInterceptors(errInterceptors, apiError);
+      }
+
+      // --- Circuit breaker: отмены запроса не считаем сбоем backend ---
+      const isCancellation =
+        apiError.code === "REQUEST_CANCELLED" || (error as any)?.name === "AbortError";
+      if (circuitBreaker && !isCancellation) {
+        circuitBreaker.onFailure(apiError);
       }
 
       config.metrics?.onRequestEnd?.({
@@ -449,6 +524,14 @@ export function createRestClient(config: HttpConfig) {
     cancelRequest,
     /** Очистить кэш ответов данного клиента */
     clearCache: () => responseCache.clear(),
+    /**
+     * Точечно инвалидировать кэш ответов по URL (подстрока, RegExp или предикат),
+     * не затрагивая записи для других эндпоинтов. Возвращает количество удалённых записей.
+     */
+    invalidateCache,
+    /** Текущее состояние circuit breaker ("closed" | "open" | "half-open"), либо null, если он не настроен. */
+    getCircuitBreakerState: (): import("./circuit-breaker").CircuitBreakerState | null =>
+      circuitBreaker?.getState() ?? null,
   };
 }
 
@@ -461,6 +544,7 @@ export function getRestClient(config: HttpConfig): RestClient {
     retry: config.retry ?? {},
     cache: config.cache ?? {},
     rateLimit: config.rateLimit ?? {},
+    circuitBreaker: config.circuitBreaker ?? {},
     sanitizeHeaders: config.sanitizeHeaders ?? false,
     sensitiveHeaders: config.sensitiveHeaders ?? [],
     metrics: !!config.metrics,

@@ -36,10 +36,19 @@ function createPipeline(stages, options = {}) {
  * Fluent builder для создания pipeline.
  * Позволяет строить конвейер цепочкой вызовов вместо ручного конструирования массива stages.
  *
+ * `TPrev` — тип `prev`, который получит *следующий* `.step()` (тип данных, возвращённых
+ * текущим шагом). Это чисто типовой (phantom) параметр — во время выполнения класс всегда
+ * работает с одним и тем же массивом stages, поведение не меняется по сравнению с
+ * нетипизированным использованием (без чейнинга — через отдельные вызовы без переприсвоения).
+ *
+ * `.parallel()` / `.subPipeline()` / `.stream()` не меняют `TPrev` — это соответствует
+ * реальному поведению orchestrator: `prev` следующего шага берётся из последнего обычного
+ * (`step`) шага, а не из параллельной группы/sub-pipeline/стрима.
+ *
  * @example
  * const orchestrator = pipe()
- *   .step({ key: "auth", request: async () => getToken() })
- *   .step({ key: "fetchUser", condition: ({ prev }) => !!prev, request: async ({ prev }) => fetchUser(prev) })
+ *   .step({ key: "auth", request: async () => getToken() })            // TPrev для следующего шага: string
+ *   .step({ key: "fetchUser", request: async ({ prev }) => fetchUser(prev) }) // prev: string — автокомплит и проверка типов
  *   .parallel([
  *     { key: "loadA", request: async () => loadA() },
  *     { key: "loadB", request: async () => loadB() },
@@ -52,14 +61,19 @@ class PipelineBuilder {
     }
     /**
      * Добавить обычный (последовательный) шаг.
+     * `prev` в этом шаге типизируется как результат предыдущего `.step()` (или `undefined` для первого).
+     * Тип `TOutput` обычно выводится автоматически из возвращаемого значения `request`/`after`.
      */
     step(stage) {
         this.stages.push(stage);
+        // Безопасный cast: TPrev/TOutput — чисто типовые параметры, не хранятся в экземпляре,
+        // поэтому смена фантомного типа не требует создания нового объекта.
         return this;
     }
     /**
      * Добавить группу параллельных шагов.
-     * Все шаги в группе выполняются одновременно через Promise.all.
+     * Все шаги в группе выполняются одновременно через Promise.all (либо через пул,
+     * если задан `concurrency`).
      */
     parallel(stages, options) {
         var _a;
@@ -68,6 +82,9 @@ class PipelineBuilder {
             parallel: stages,
             ...((options === null || options === void 0 ? void 0 : options.continueOnError) !== undefined
                 ? { continueOnError: options.continueOnError }
+                : {}),
+            ...((options === null || options === void 0 ? void 0 : options.concurrency) !== undefined
+                ? { concurrency: options.concurrency }
                 : {}),
         };
         this.stages.push(group);
@@ -110,6 +127,8 @@ exports.PipelineBuilder = PipelineBuilder;
 /**
  * Создаёт новый PipelineBuilder.
  * Точка входа для fluent API.
+ * `prev` первого `.step()` типизируется как `undefined` — ровно так, как ведёт себя
+ * orchestrator в реальности (у первого шага pipeline нет предыдущего результата).
  *
  * @example
  * const orchestrator = pipe()

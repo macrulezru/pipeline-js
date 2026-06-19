@@ -21,6 +21,16 @@ export declare function createRestClient(config: HttpConfig): {
     cancelRequest: (key: string) => void;
     /** Очистить кэш ответов данного клиента */
     clearCache: () => void;
+    /**
+     * Точечно инвалидировать кэш ответов по URL (подстрока, RegExp или предикат),
+     * не затрагивая записи для других эндпоинтов. Возвращает количество удалённых записей.
+     */
+    invalidateCache: (matcher: string | RegExp | ((info: {
+        method: string;
+        url: string;
+    }) => boolean)) => number;
+    /** Текущее состояние circuit breaker ("closed" | "open" | "half-open"), либо null, если он не настроен. */
+    getCircuitBreakerState: () => import("./circuit-breaker").CircuitBreakerState | null;
 };
 export declare function getRestClient(config: HttpConfig): RestClient;
 export {};

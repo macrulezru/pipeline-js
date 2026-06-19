@@ -2,6 +2,7 @@ import { ErrorHandler } from "./error-handler";
 import { ProgressTracker } from "./progress-tracker";
 import { RequestExecutor } from "./request-executor";
 import { toApiError } from "./rest-client";
+import { isStepRecovery } from "./types";
 
 import type {
   PipelineConfig,
@@ -72,6 +73,7 @@ export class PipelineOrchestrator<TKeys extends string = string> {
     message: string;
     data?: any;
     timestamp: Date;
+    runId?: string;
   }> = [];
 
   private stageResults: Record<string, PipelineStepResult> = {};
@@ -93,6 +95,13 @@ export class PipelineOrchestrator<TKeys extends string = string> {
 
   /** Индекс последнего упавшего шага (для pipelineRetry с retryFrom: 'failed-step') */
   private _lastFailedIndex: number = -1;
+
+  /**
+   * Идентификатор текущего/последнего запуска. Генерируется заново в начале run() и rerunStep()
+   * (на все попытки внутри одного run(), включая pipelineRetry, — один и тот же runId).
+   * Используется для корреляции событий/логов/метрик одного запуска во внешних системах.
+   */
+  private _runId: string = "";
 
   /** Cleanup-функции плагинов */
   private _pluginCleanups: Array<() => void> = [];
@@ -331,6 +340,17 @@ export class PipelineOrchestrator<TKeys extends string = string> {
     return this.abortController?.signal.aborted ?? false;
   }
 
+  /** Идентификатор текущего/последнего запуска (run() или rerunStep()). Пустая строка, если ничего не выполнялось. */
+  getRunId(): string {
+    return this._runId;
+  }
+
+  private _generateRunId(): string {
+    const g: any = globalThis as any;
+    if (g.crypto?.randomUUID) return g.crypto.randomUUID();
+    return `run-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  }
+
   // ─────────────────────────────────────────────────────────────────────────
   // Emit helpers
   // ─────────────────────────────────────────────────────────────────────────
@@ -350,34 +370,38 @@ export class PipelineOrchestrator<TKeys extends string = string> {
   }
 
   private addLog(type: string, message: string, data?: any) {
-    this.logs.push({ type, message, data, timestamp: new Date() });
+    this.logs.push({ type, message, data, timestamp: new Date(), runId: this._runId });
   }
 
   private async emitStepStart(event: PipelineStepEvent) {
-    for (const handler of this.onStepStartHandlers) await handler(event);
-    await this.emit(`step:${event.stepKey}:start`, event);
-    this.addLog("log", `step:${event.stepKey}:start`, event);
-    await this.emit("log", { type: "step:start", ...event });
+    const e = { ...event, runId: this._runId };
+    for (const handler of this.onStepStartHandlers) await handler(e);
+    await this.emit(`step:${e.stepKey}:start`, e);
+    this.addLog("log", `step:${e.stepKey}:start`, e);
+    await this.emit("log", { type: "step:start", ...e });
   }
 
   private async emitStepFinish(event: PipelineStepEvent) {
-    for (const handler of this.onStepFinishHandlers) await handler(event);
-    await this.emit(`step:${event.stepKey}:success`, event);
-    this.addLog("log", `step:${event.stepKey}:success`, event);
-    await this.emit("log", { type: "step:success", ...event });
+    const e = { ...event, runId: this._runId };
+    for (const handler of this.onStepFinishHandlers) await handler(e);
+    await this.emit(`step:${e.stepKey}:success`, e);
+    this.addLog("log", `step:${e.stepKey}:success`, e);
+    await this.emit("log", { type: "step:success", ...e });
   }
 
   private async emitStepError(event: PipelineStepEvent) {
-    for (const handler of this.onStepErrorHandlers) await handler(event);
-    await this.emit(`step:${event.stepKey}:error`, event);
-    this.addLog("error", `step:${event.stepKey}:error`, event);
-    await this.emit("log", { type: "step:error", ...event });
+    const e = { ...event, runId: this._runId };
+    for (const handler of this.onStepErrorHandlers) await handler(e);
+    await this.emit(`step:${e.stepKey}:error`, e);
+    this.addLog("error", `step:${e.stepKey}:error`, e);
+    await this.emit("log", { type: "step:error", ...e });
   }
 
   private async emitStepSkipped(event: PipelineStepEvent) {
-    await this.emit(`step:${event.stepKey}:skipped`, event);
-    this.addLog("log", `step:${event.stepKey}:skipped`, event);
-    await this.emit("log", { type: "step:skipped", ...event });
+    const e = { ...event, runId: this._runId };
+    await this.emit(`step:${e.stepKey}:skipped`, e);
+    this.addLog("log", `step:${e.stepKey}:skipped`, e);
+    await this.emit("log", { type: "step:skipped", ...e });
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -419,6 +443,7 @@ export class PipelineOrchestrator<TKeys extends string = string> {
         prev: prevData,
         allResults: this.stageResults,
         sharedData: this.sharedData,
+        signal,
       });
       if (!shouldRun) {
         const skippedResult: PipelineStepResult = { status: "skipped" };
@@ -483,6 +508,7 @@ export class PipelineOrchestrator<TKeys extends string = string> {
           prev: prevInput,
           allResults: this.stageResults,
           sharedData: this.sharedData,
+          signal,
         });
         if (beforeResult !== undefined) prevInput = beforeResult;
       }
@@ -495,8 +521,6 @@ export class PipelineOrchestrator<TKeys extends string = string> {
       // ── request ────────────────────────────────────────────────────────
       let stepResult: unknown;
       if (typeof stage.request === "function") {
-        // Для функций request нужно передать сигнал, чтобы они могли его учесть
-        // Но текущий API не поддерживает signal. Добавляем проверку перед вызовом
         if (signal.aborted) {
           throw new Error("Pipeline aborted");
         }
@@ -504,6 +528,7 @@ export class PipelineOrchestrator<TKeys extends string = string> {
           prev: prevInput,
           allResults: this.stageResults,
           sharedData: this.sharedData,
+          signal,
         });
       } else if (stage.key) {
         // Нет функции request — используем stage.key как URL endpoint
@@ -530,6 +555,7 @@ export class PipelineOrchestrator<TKeys extends string = string> {
           result: stepResult,
           allResults: this.stageResults,
           sharedData: this.sharedData,
+          signal,
         });
       }
 
@@ -549,105 +575,139 @@ export class PipelineOrchestrator<TKeys extends string = string> {
         );
       }
 
-      // ── Сохраняем результат ───────────────────────────────────────────
-      const successResult: PipelineStepResult = {
-        status: "success",
-        data: stepResult,
-      };
-      this.stageResults[key] = successResult;
-      this.notifyStageResults();
-      this.progress.updateStage(stepIndex, "success");
-      await this.emit(`step:${key}:progress`, "success");
-
-      // ── Метрики: длительность шага ───────────────────────────────────
-      this.config.metrics?.onStepDuration?.({
-        stepKey: key,
-        durationMs: Date.now() - stepStartTs,
-        status: "success",
-      });
-
-      // ── Persist adapter: сохраняем состояние после шага ──────────────
-      const persistAdapter = this.config.options?.persistAdapter;
-      if (persistAdapter) {
-        try {
-          await persistAdapter.save(this.exportState());
-        } catch { /* не прерываем pipeline из-за ошибки persist */ }
-      }
-
-      // ── Global middleware: afterEach ───────────────────────────────────
-      if (typeof this.config.middleware?.afterEach === "function") {
-        await this.config.middleware.afterEach({
-          stage,
-          index: stepIndex,
-          result: successResult,
-          sharedData: this.sharedData,
-        });
-      }
-
-      await this.emitStepFinish({
-        stepIndex,
-        stepKey: key,
-        status: "success",
-        data: stepResult,
-        stageResults: { ...this.stageResults },
-      });
-
-      // ── pause/resume: проверяем ПОСЛЕ emit событий ────────────────────
-      if (this._paused && this._resumePromise) {
-        await this._resumePromise;
-      }
-
-      return successResult;
+      return await this._commitStepSuccess(stepIndex, stage, stepResult, stepStartTs);
     } catch (err) {
       // ── Обработка ошибки ─────────────────────────────────────────────
-      let apiError: import("./types").ApiError;
       if (typeof stage.errorHandler === "function") {
         const handled = stage.errorHandler({
           error: err,
           key: stage.key,
           sharedData: this.sharedData,
+          signal,
         });
-        apiError = toApiError(handled ?? err);
-      } else {
-        apiError = this.errorHandler.handle(err, stage.key);
-      }
-
-      const errorResult: PipelineStepResult = {
-        status: "error",
-        error: apiError,
-      };
-      this.stageResults[key] = errorResult;
-      this.notifyStageResults();
-      this.progress.updateStage(stepIndex, "error");
-      await this.emit(`step:${key}:progress`, "error");
-
-      // ── Метрики: длительность шага (error) ───────────────────────────
-      this.config.metrics?.onStepDuration?.({
-        stepKey: key,
-        durationMs: Date.now() - stepStartTs,
-        status: "error",
-      });
-
-      // ── Global middleware: onError ─────────────────────────────────────
-      if (typeof this.config.middleware?.onError === "function") {
-        await this.config.middleware.onError({
+        if (isStepRecovery(handled)) {
+          // errorHandler восстановил шаг — продолжаем как после успеха
+          return await this._commitStepSuccess(
+            stepIndex,
+            stage,
+            handled.data,
+            stepStartTs,
+          );
+        }
+        return await this._commitStepError(
+          stepIndex,
           stage,
-          index: stepIndex,
-          error: apiError,
-          sharedData: this.sharedData,
-        });
+          toApiError(handled ?? err),
+          stepStartTs,
+        );
       }
-
-      await this.emitStepError({
+      return await this._commitStepError(
         stepIndex,
-        stepKey: key,
-        status: "error",
-        error: apiError,
-        stageResults: { ...this.stageResults },
-      });
-
-      return errorResult;
+        stage,
+        this.errorHandler.handle(err, stage.key),
+        stepStartTs,
+      );
     }
+  }
+
+  /** Зафиксировать успешный результат шага: запись в stageResults, метрики, persist, middleware, события. */
+  private async _commitStepSuccess(
+    stepIndex: number,
+    stage: PipelineStageConfig,
+    stepResult: unknown,
+    stepStartTs: number,
+  ): Promise<PipelineStepResult> {
+    const key = stage.key;
+    const successResult: PipelineStepResult = {
+      status: "success",
+      data: stepResult,
+    };
+    this.stageResults[key] = successResult;
+    this.notifyStageResults();
+    this.progress.updateStage(stepIndex, "success");
+    await this.emit(`step:${key}:progress`, "success");
+
+    this.config.metrics?.onStepDuration?.({
+      stepKey: key,
+      durationMs: Date.now() - stepStartTs,
+      status: "success",
+      runId: this._runId,
+    });
+
+    const persistAdapter = this.config.options?.persistAdapter;
+    if (persistAdapter) {
+      try {
+        await persistAdapter.save(this.exportState());
+      } catch { /* не прерываем pipeline из-за ошибки persist */ }
+    }
+
+    if (typeof this.config.middleware?.afterEach === "function") {
+      await this.config.middleware.afterEach({
+        stage,
+        index: stepIndex,
+        result: successResult,
+        sharedData: this.sharedData,
+      });
+    }
+
+    await this.emitStepFinish({
+      stepIndex,
+      stepKey: key,
+      status: "success",
+      data: stepResult,
+      stageResults: { ...this.stageResults },
+    });
+
+    // ── pause/resume: проверяем ПОСЛЕ emit событий ────────────────────
+    if (this._paused && this._resumePromise) {
+      await this._resumePromise;
+    }
+
+    return successResult;
+  }
+
+  /** Зафиксировать ошибку шага: запись в stageResults, метрики, middleware, события. */
+  private async _commitStepError(
+    stepIndex: number,
+    stage: PipelineStageConfig,
+    apiError: import("./types").ApiError,
+    stepStartTs: number,
+  ): Promise<PipelineStepResult> {
+    const key = stage.key;
+    const errorResult: PipelineStepResult = {
+      status: "error",
+      error: apiError,
+    };
+    this.stageResults[key] = errorResult;
+    this.notifyStageResults();
+    this.progress.updateStage(stepIndex, "error");
+    await this.emit(`step:${key}:progress`, "error");
+
+    this.config.metrics?.onStepDuration?.({
+      stepKey: key,
+      durationMs: Date.now() - stepStartTs,
+      status: "error",
+      runId: this._runId,
+    });
+
+    if (typeof this.config.middleware?.onError === "function") {
+      await this.config.middleware.onError({
+        stage,
+        index: stepIndex,
+        error: apiError,
+        sharedData: this.sharedData,
+      });
+    }
+
+    await this.emitStepError({
+      stepIndex,
+      stepKey: key,
+      status: "error",
+      error: apiError,
+      stageResults: { ...this.stageResults },
+    });
+
+    return errorResult;
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -686,6 +746,7 @@ export class PipelineOrchestrator<TKeys extends string = string> {
         prev: prevData,
         allResults: this.stageResults,
         sharedData: this.sharedData,
+        signal,
       });
 
       for await (const chunk of asyncIter) {
@@ -706,6 +767,7 @@ export class PipelineOrchestrator<TKeys extends string = string> {
         stepKey: key,
         durationMs: Date.now() - stepStartTs,
         status: "success",
+        runId: this._runId,
       });
 
       const persistAdapter = this.config.options?.persistAdapter;
@@ -741,6 +803,7 @@ export class PipelineOrchestrator<TKeys extends string = string> {
         stepKey: key,
         durationMs: Date.now() - stepStartTs,
         status: "error",
+        runId: this._runId,
       });
 
       this.addLog("error", `stream:${key}:error`, { stepIndex, error: apiError });
@@ -879,6 +942,36 @@ export class PipelineOrchestrator<TKeys extends string = string> {
     return undefined;
   }
 
+  /**
+   * Выполнить worker для каждого элемента items с ограничением одновременных выполнений (limit).
+   * Без limit (undefined/0/>= items.length) ведёт себя как Promise.all — все элементы стартуют сразу.
+   * Результаты возвращаются в исходном порядке items независимо от порядка завершения.
+   */
+  private async _runPooled<T>(
+    items: T[],
+    limit: number | undefined,
+    worker: (item: T, index: number) => Promise<PipelineStepResult>,
+  ): Promise<PipelineStepResult[]> {
+    if (!limit || limit >= items.length) {
+      return Promise.all(items.map((item, index) => worker(item, index)));
+    }
+
+    const results: PipelineStepResult[] = new Array(items.length);
+    let nextIndex = 0;
+
+    const runNext = async (): Promise<void> => {
+      const index = nextIndex++;
+      if (index >= items.length) return;
+      results[index] = await worker(items[index], index);
+      return runNext();
+    };
+
+    const poolSize = Math.max(1, Math.min(limit, items.length));
+    await Promise.all(Array.from({ length: poolSize }, () => runNext()));
+
+    return results;
+  }
+
   // ─────────────────────────────────────────────────────────────────────────
   // _runOnce() — одна попытка выполнения pipeline
   // ─────────────────────────────────────────────────────────────────────────
@@ -993,10 +1086,10 @@ export class PipelineOrchestrator<TKeys extends string = string> {
         const group = item as ParallelStageGroup;
         this.progress.updateStage(i, "loading");
 
-        const parallelResults = await Promise.all(
-          group.parallel.map((stage) =>
-            this.executeStage(i, stage, signal!, onStepPause),
-          ),
+        const parallelResults = await this._runPooled(
+          group.parallel,
+          group.concurrency,
+          (stage) => this.executeStage(i, stage, signal!, onStepPause),
         );
 
         const anyFailed = parallelResults.some(
@@ -1085,6 +1178,7 @@ export class PipelineOrchestrator<TKeys extends string = string> {
     this._resumePromise = null;
     this._resumeResolve = null;
     this._lastFailedIndex = -1;
+    this._runId = this._generateRunId();
 
     this.abortController = new AbortController();
     const signal = externalSignal
@@ -1107,7 +1201,7 @@ export class PipelineOrchestrator<TKeys extends string = string> {
     }
 
     // ── Метрики: старт pipeline ───────────────────────────────────────
-    this.config.metrics?.onPipelineStart?.({ timestamp: pipelineStartTs });
+    this.config.metrics?.onPipelineStart?.({ timestamp: pipelineStartTs, runId: this._runId });
 
     // ── Таймаут всего pipeline ─────────────────────────────────────────
     let pipelineTimeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -1170,6 +1264,7 @@ export class PipelineOrchestrator<TKeys extends string = string> {
       durationMs: Date.now() - pipelineStartTs,
       success: lastResult.success,
       stageResults: lastResult.stageResults,
+      runId: this._runId,
     });
 
     return lastResult;
@@ -1218,6 +1313,9 @@ export class PipelineOrchestrator<TKeys extends string = string> {
     }
 
     if (!stage || stepIndex === -1) return undefined;
+
+    // rerunStep — самостоятельное выполнение, отдельное от текущего run(); получает свой runId.
+    this._runId = this._generateRunId();
 
     this.addLog("log", `rerunStep:${stepKey}:start`, { stepIndex });
     await this.emit("log", { type: "rerunStep:start", stepKey, stepIndex });

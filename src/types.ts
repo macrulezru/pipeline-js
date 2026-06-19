@@ -14,6 +14,13 @@ export interface AuthProvider {
    * Повтор происходит только один раз во избежание бесконечной петли.
    */
   onUnauthorized?(): Promise<void>;
+  /**
+   * Если задано — результат getToken() кэшируется на это время (мс) и переиспользуется
+   * между запросами вместо вызова getToken() перед каждым запросом.
+   * Кэш инвалидируется автоматически при 401 (перед вызовом onUnauthorized и повторной попыткой).
+   * По умолчанию: не задано — getToken() вызывается перед каждым запросом, как раньше.
+   */
+  tokenTtlMs?: number;
 }
 
 /**
@@ -65,6 +72,25 @@ export interface RateLimitConfig {
   maxConcurrent?: number;
   maxRequestsPerInterval?: number;
   intervalMs?: number;
+}
+
+export interface CircuitBreakerConfig {
+  /** Количество последовательных ошибок (в состоянии closed), после которого circuit открывается. */
+  failureThreshold: number;
+  /** Сколько мс circuit остаётся открытым (запросы отклоняются без обращения к сети), прежде чем перейти в half-open. */
+  openMs: number;
+  /**
+   * Количество успешных запросов в состоянии half-open, необходимое для закрытия circuit.
+   * Любая неудача в half-open сразу возвращает circuit в open.
+   * По умолчанию: 1.
+   */
+  successThreshold?: number;
+  /**
+   * Предикат: какие ошибки считать сбоем для circuit breaker.
+   * По умолчанию (не задано) — сбоем считается любая ошибка запроса.
+   * Полезно, например, чтобы не открывать circuit на 4xx-ошибках валидации.
+   */
+  isFailure?: (error: ApiError) => boolean;
 }
 
 export interface MetricsHandler {
@@ -174,6 +200,12 @@ export interface HttpConfig {
    * или для передачи нативного fetch.
    */
   adapter?: HttpAdapter;
+  /**
+   * Circuit breaker: после failureThreshold последовательных ошибок запросы отклоняются
+   * немедленно (без обращения к сети) на время openMs, защищая упавший backend от лишней нагрузки.
+   * Не задан по умолчанию — поведение без circuit breaker не меняется.
+   */
+  circuitBreaker?: CircuitBreakerConfig;
 }
 
 export interface ApiError {
@@ -203,23 +235,32 @@ export type PipelineStageConfig<Input = any, Output = any> = {
     prev: Input;
     allResults: Record<string, PipelineStepResult>;
     sharedData: Record<string, any>;
+    /** Сигнал отмены pipeline. Передайте его в fetch/axios/etc., чтобы abort() реально отменял запрос. */
+    signal: AbortSignal;
   }) => Promise<Output> | Output;
   /** Условие выполнения шага (возвращает false → шаг пропускается со статусом 'skipped') */
   condition?: (params: {
     prev: Input;
     allResults: Record<string, PipelineStepResult>;
     sharedData: Record<string, any>;
+    signal: AbortSignal;
   }) => boolean;
   /** Количество попыток при ошибке */
   retryCount?: number;
   /** Таймаут шага (мс) */
   timeoutMs?: number;
-  /** Обработчик ошибок шага */
+  /**
+   * Обработчик ошибок шага.
+   * По умолчанию любое возвращённое значение преобразуется в ApiError и шаг помечается 'error'.
+   * Чтобы восстановить шаг как успешный (не прерывая pipeline), верните `{ recover: true, data }` —
+   * см. PipelineStepRecovery.
+   */
   errorHandler?: (params: {
     error: any;
     key: string;
     sharedData: Record<string, any>;
-  }) => any;
+    signal: AbortSignal;
+  }) => any | PipelineStepRecovery<Output>;
   /**
    * Хук before: вызывается перед выполнением запроса этапа (request).
    * Может синхронно или асинхронно модифицировать входные данные prev/allResults/sharedData.
@@ -229,6 +270,7 @@ export type PipelineStageConfig<Input = any, Output = any> = {
     prev: Input;
     allResults: Record<string, PipelineStepResult>;
     sharedData: Record<string, any>;
+    signal: AbortSignal;
   }) => Promise<Input | void> | Input | void;
 
   /**
@@ -240,6 +282,7 @@ export type PipelineStageConfig<Input = any, Output = any> = {
     result: Output;
     allResults: Record<string, PipelineStepResult>;
     sharedData: Record<string, any>;
+    signal: AbortSignal;
   }) => Promise<Output> | Output;
   /** Пауза (мс) перед выполнением команды */
   pauseBefore?: number;
@@ -276,6 +319,13 @@ export type ParallelStageGroup = {
    * Переопределяет глобальный флаг continueOnError из PipelineConfig.options.
    */
   continueOnError?: boolean;
+  /**
+   * Максимальное количество шагов группы, выполняемых одновременно.
+   * По умолчанию: без ограничения (все шаги запускаются сразу, как Promise.all).
+   * Полезно для fan-out по большому числу элементов (например, постраничная загрузка),
+   * чтобы не открывать сотни запросов параллельно.
+   */
+  concurrency?: number;
 };
 
 /**
@@ -340,6 +390,34 @@ export type PipelineStepStatus =
   | "success"
   | "error"
   | "skipped";
+
+/**
+ * Значение, которое errorHandler шага может вернуть, чтобы "восстановить" шаг —
+ * pipeline продолжит выполнение как после успеха, со статусом 'success' и указанными data,
+ * вместо остановки/continueOnError-ветки с error.
+ *
+ * @example
+ * errorHandler: ({ error }) => recoverStep(fallbackValue)
+ */
+export type PipelineStepRecovery<T = any> = {
+  recover: true;
+  data: T;
+};
+
+/** Хелпер для errorHandler: помечает шаг как восстановленный (status: 'success') с указанными data. */
+export function recoverStep<T = any>(data: T): PipelineStepRecovery<T> {
+  return { recover: true, data };
+}
+
+/** Проверка: является ли значение, возвращённое errorHandler, признаком восстановления шага. */
+export function isStepRecovery(value: unknown): value is PipelineStepRecovery {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as Record<string, unknown>).recover === true &&
+    "data" in value
+  );
+}
 
 /**
  * Результат выполнения шага pipeline
@@ -461,6 +539,11 @@ export type PipelineStepEvent = {
   error?: ApiError;
   /** Снимок всех результатов на момент события */
   stageResults: Record<string, PipelineStepResult>;
+  /**
+   * Идентификатор текущего запуска pipeline (генерируется заново на каждый run()/rerunStep()).
+   * Используйте для корреляции событий/логов/метрик одного запуска во внешних системах наблюдаемости.
+   */
+  runId?: string;
 };
 
 /**
@@ -480,6 +563,7 @@ export type PipelineExportedState = {
     message: string;
     data?: any;
     timestamp: string;
+    runId?: string;
   }>;
 };
 
@@ -519,18 +603,20 @@ export type PipelineLogEventType =
  */
 export interface PipelineMetrics {
   /** Вызывается при старте pipeline.run() */
-  onPipelineStart?: (info: { timestamp: number }) => void;
+  onPipelineStart?: (info: { timestamp: number; runId: string }) => void;
   /** Вызывается при завершении pipeline.run() */
   onPipelineEnd?: (info: {
     durationMs: number;
     success: boolean;
     stageResults: PipelineStageResults;
+    runId: string;
   }) => void;
   /** Вызывается после каждого выполненного шага с его длительностью */
   onStepDuration?: (info: {
     stepKey: string;
     durationMs: number;
     status: PipelineStepStatus;
+    runId: string;
   }) => void;
 }
 
@@ -619,6 +705,7 @@ export type StreamStageConfig<T = unknown> = {
     prev: any;
     allResults: Record<string, PipelineStepResult>;
     sharedData: Record<string, any>;
+    signal: AbortSignal;
   }) => AsyncIterable<T>;
   /**
    * Вызывается для каждого полученного чанка в реальном времени.

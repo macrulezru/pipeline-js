@@ -17,16 +17,19 @@ export declare function usePipelineLogsVue(orchestrator: PipelineOrchestrator): 
     message: string;
     data?: any;
     timestamp: Date;
+    runId?: string | undefined;
 }[], {
     type: string;
     message: string;
     data?: any;
     timestamp: Date;
+    runId?: string;
 }[] | {
     type: string;
     message: string;
     data?: any;
     timestamp: Date;
+    runId?: string | undefined;
 }[]>;
 /**
  * Vue composition function for rerunning a pipeline step

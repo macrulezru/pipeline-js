@@ -74,6 +74,195 @@ describe("clearRestClientCache", () => {
     const client = createRestClient({ baseURL: "http://localhost" });
     expect(() => client.clearCache()).not.toThrow();
   });
+
+  it("не вызывает axios.create() когда передан кастомный adapter", () => {
+    const createSpy = vi.spyOn(axios, "create");
+    createSpy.mockClear();
+    createRestClient({
+      baseURL: "http://localhost",
+      adapter: {
+        request: async () => ({ data: {}, status: 200, statusText: "OK", headers: {} }),
+      },
+    });
+    expect(createSpy).not.toHaveBeenCalled();
+    createSpy.mockRestore();
+  });
+
+  it("использует adapter.request() вместо axios при выполнении запроса", async () => {
+    const adapterRequest = vi.fn().mockResolvedValue({
+      data: { ok: true },
+      status: 200,
+      statusText: "OK",
+      headers: {},
+    });
+    const client = createRestClient({
+      baseURL: "http://localhost",
+      adapter: { request: adapterRequest },
+    });
+    const res = await client.get("/ping");
+    expect(adapterRequest).toHaveBeenCalledTimes(1);
+    expect(res.data).toEqual({ ok: true });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// invalidateCache()
+// ─────────────────────────────────────────────────────────────────────────────
+describe("invalidateCache()", () => {
+  it("удаляет только записи с совпадающим URL (подстрока), не трогая остальные", async () => {
+    let callCount = 0;
+    const adapterRequest = vi.fn().mockImplementation(async (cfg: any) => {
+      callCount++;
+      return { data: { url: cfg.url, n: callCount }, status: 200, statusText: "OK", headers: {} };
+    });
+    const client = createRestClient({
+      baseURL: "http://localhost",
+      cache: { enabled: true, ttlMs: 60_000 },
+      adapter: { request: adapterRequest },
+    });
+
+    const usersRes1 = await client.get("/users/1");
+    const postsRes1 = await client.get("/posts/1");
+    expect(callCount).toBe(2);
+
+    const removed = client.invalidateCache("/users");
+    expect(removed).toBe(1);
+
+    // /users снова идёт в сеть (кэш инвалидирован), /posts остаётся закэширован
+    const usersRes2 = await client.get("/users/1");
+    const postsRes2 = await client.get("/posts/1");
+
+    expect(callCount).toBe(3);
+    expect(usersRes2.data).not.toEqual(usersRes1.data);
+    expect(postsRes2.data).toEqual(postsRes1.data);
+  });
+
+  it("поддерживает RegExp и предикат-функцию", async () => {
+    let callCount = 0;
+    const adapterRequest = vi.fn().mockImplementation(async () => {
+      callCount++;
+      return { data: { n: callCount }, status: 200, statusText: "OK", headers: {} };
+    });
+    const client = createRestClient({
+      baseURL: "http://localhost",
+      cache: { enabled: true, ttlMs: 60_000 },
+      adapter: { request: adapterRequest },
+    });
+
+    await client.get("/items/1");
+    expect(client.invalidateCache(/\/items\/\d+/)).toBe(1);
+
+    await client.get("/items/2");
+    expect(
+      client.invalidateCache(({ method, url }) => method === "GET" && url.includes("/items")),
+    ).toBe(1);
+  });
+
+  it("возвращает 0, если совпадений не найдено", () => {
+    const client = createRestClient({ baseURL: "http://localhost" });
+    expect(client.invalidateCache("/nothing")).toBe(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Circuit breaker
+// ─────────────────────────────────────────────────────────────────────────────
+describe("circuitBreaker", () => {
+  it("getCircuitBreakerState() возвращает null, если circuit breaker не настроен", () => {
+    const client = createRestClient({ baseURL: "http://localhost" });
+    expect(client.getCircuitBreakerState()).toBeNull();
+  });
+
+  it("открывается после failureThreshold ошибок и отклоняет запросы без обращения к adapter", async () => {
+    const adapterRequest = vi.fn().mockRejectedValue(new Error("network down"));
+    const client = createRestClient({
+      baseURL: "http://localhost",
+      adapter: { request: adapterRequest },
+      circuitBreaker: { failureThreshold: 2, openMs: 10_000 },
+    });
+
+    await expect(client.get("/a")).rejects.toBeDefined();
+    expect(client.getCircuitBreakerState()).toBe("closed");
+
+    await expect(client.get("/a")).rejects.toBeDefined();
+    expect(client.getCircuitBreakerState()).toBe("open");
+    expect(adapterRequest).toHaveBeenCalledTimes(2);
+
+    // Circuit открыт — следующий запрос отклоняется немедленно, adapter не вызывается
+    await expect(client.get("/a")).rejects.toMatchObject({ code: "CIRCUIT_OPEN" });
+    expect(adapterRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it("переходит в half-open после openMs и закрывается при успехе", async () => {
+    vi.useFakeTimers();
+    let shouldFail = true;
+    const adapterRequest = vi.fn().mockImplementation(async () => {
+      if (shouldFail) throw new Error("down");
+      return { data: { ok: true }, status: 200, statusText: "OK", headers: {} };
+    });
+    const client = createRestClient({
+      baseURL: "http://localhost",
+      adapter: { request: adapterRequest },
+      circuitBreaker: { failureThreshold: 1, openMs: 1000 },
+    });
+
+    await expect(client.get("/a")).rejects.toBeDefined();
+    expect(client.getCircuitBreakerState()).toBe("open");
+
+    vi.advanceTimersByTime(1001);
+    expect(client.getCircuitBreakerState()).toBe("half-open");
+
+    shouldFail = false;
+    const res = await client.get("/a");
+    expect(res.data).toEqual({ ok: true });
+    expect(client.getCircuitBreakerState()).toBe("closed");
+
+    vi.useRealTimers();
+  });
+
+  it("неудача в half-open снова открывает circuit", async () => {
+    vi.useFakeTimers();
+    const adapterRequest = vi.fn().mockRejectedValue(new Error("down"));
+    const client = createRestClient({
+      baseURL: "http://localhost",
+      adapter: { request: adapterRequest },
+      circuitBreaker: { failureThreshold: 1, openMs: 1000 },
+    });
+
+    await expect(client.get("/a")).rejects.toBeDefined();
+    vi.advanceTimersByTime(1001);
+    expect(client.getCircuitBreakerState()).toBe("half-open");
+
+    await expect(client.get("/a")).rejects.toBeDefined();
+    expect(client.getCircuitBreakerState()).toBe("open");
+
+    vi.useRealTimers();
+  });
+
+  it("isFailure позволяет игнорировать определённые ошибки (не открывать circuit)", async () => {
+    const makeAxiosLikeError = (status: number) => {
+      const err: any = new Error(`status ${status}`);
+      err.isAxiosError = true;
+      err.response = { status, data: {}, headers: {}, statusText: "Error" };
+      Object.setPrototypeOf(err, axios.AxiosError.prototype);
+      return err;
+    };
+    const adapterRequest = vi.fn().mockRejectedValue(makeAxiosLikeError(400));
+    const client = createRestClient({
+      baseURL: "http://localhost",
+      adapter: { request: adapterRequest },
+      circuitBreaker: {
+        failureThreshold: 1,
+        openMs: 10_000,
+        isFailure: (error) => error.status !== 400,
+      },
+    });
+
+    await expect(client.get("/a")).rejects.toBeDefined();
+    await expect(client.get("/a")).rejects.toBeDefined();
+    // 400 не считается сбоем для breaker — circuit остаётся closed
+    expect(client.getCircuitBreakerState()).toBe("closed");
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -224,6 +413,103 @@ describe("Auth Provider", () => {
     mockAxios.mockRestore();
   });
 
+  it("tokenTtlMs кэширует токен между запросами вместо вызова getToken() каждый раз", async () => {
+    let tokenCallCount = 0;
+    const mockAxios = vi.spyOn(axios, "create").mockReturnValue({
+      request: vi.fn().mockResolvedValue({
+        data: {},
+        status: 200,
+        statusText: "OK",
+        headers: {},
+        config: {},
+      }),
+      defaults: { headers: { common: {} } },
+      interceptors: { request: { use: () => {} }, response: { use: () => {} } },
+    } as any);
+
+    const client = createRestClient({
+      baseURL: "http://localhost",
+      auth: {
+        getToken: async () => {
+          tokenCallCount++;
+          return "token-1";
+        },
+        tokenTtlMs: 10_000,
+      },
+    });
+
+    await client.get("/a");
+    await client.get("/b");
+    await client.get("/c");
+    expect(tokenCallCount).toBe(1);
+
+    mockAxios.mockRestore();
+  });
+
+  it("без tokenTtlMs getToken() вызывается перед каждым запросом (поведение по умолчанию)", async () => {
+    let tokenCallCount = 0;
+    const mockAxios = vi.spyOn(axios, "create").mockReturnValue({
+      request: vi.fn().mockResolvedValue({
+        data: {},
+        status: 200,
+        statusText: "OK",
+        headers: {},
+        config: {},
+      }),
+      defaults: { headers: { common: {} } },
+      interceptors: { request: { use: () => {} }, response: { use: () => {} } },
+    } as any);
+
+    const client = createRestClient({
+      baseURL: "http://localhost",
+      auth: { getToken: async () => { tokenCallCount++; return "token"; } },
+    });
+
+    await client.get("/a");
+    await client.get("/b");
+    expect(tokenCallCount).toBe(2);
+
+    mockAxios.mockRestore();
+  });
+
+  it("кэш токена инвалидируется при 401 — следующий запрос вызывает getToken() заново", async () => {
+    let tokenCallCount = 0;
+    let shouldFail = true;
+    const mockAxios = vi.spyOn(axios, "create").mockReturnValue({
+      request: vi.fn().mockImplementation(async () => {
+        if (shouldFail) {
+          const err: any = new Error("Unauthorized");
+          err.isAxiosError = true;
+          err.response = { status: 401, data: {}, headers: {}, statusText: "Unauthorized" };
+          Object.setPrototypeOf(err, axios.AxiosError.prototype);
+          throw err;
+        }
+        return { data: { ok: true }, status: 200, statusText: "OK", headers: {}, config: {} };
+      }),
+      defaults: { headers: { common: {} } },
+      interceptors: { request: { use: () => {} }, response: { use: () => {} } },
+    } as any);
+
+    const client = createRestClient({
+      baseURL: "http://localhost",
+      auth: {
+        getToken: async () => {
+          tokenCallCount++;
+          return `token-${tokenCallCount}`;
+        },
+        tokenTtlMs: 10_000,
+        onUnauthorized: async () => {
+          shouldFail = false; // следующий реальный запрос пройдёт
+        },
+      },
+    });
+
+    await client.get("/a");
+    expect(tokenCallCount).toBe(2); // 1 исходный + 1 после инвалидации кэша на retry
+
+    mockAxios.mockRestore();
+  });
+
   it("при повторном 401 после onUnauthorized — не попадает в бесконечный цикл", async () => {
     let requestCount = 0;
 
@@ -231,8 +517,11 @@ describe("Auth Provider", () => {
       request: vi.fn().mockImplementation(async () => {
         requestCount++;
         const err: any = new Error("Unauthorized");
-        Object.setPrototypeOf(err, axios.AxiosError.prototype);
+        // isAxiosError должен быть назначен ДО смены прототипа: AxiosError.prototype
+        // определяет isAxiosError как non-writable (Object.defineProperty(..., {value: true})),
+        // поэтому присвоение после setPrototypeOf бросает TypeError в strict mode.
         err.isAxiosError = true;
+        Object.setPrototypeOf(err, axios.AxiosError.prototype);
         err.response = { status: 401, data: {}, headers: {}, statusText: "Unauthorized" };
         throw err;
       }),

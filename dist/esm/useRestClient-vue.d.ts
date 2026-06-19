@@ -16,4 +16,9 @@ export declare const useRestClientVue: (config: HttpConfig) => import("vue").Com
     cancellableRequest: <T = unknown>(key: string, command: string, reqConfig?: import("./types").RestRequestConfig) => Promise<import("./types").ApiResponse<T>>;
     cancelRequest: (key: string) => void;
     clearCache: () => void;
+    invalidateCache: (matcher: string | RegExp | ((info: {
+        method: string;
+        url: string;
+    }) => boolean)) => number;
+    getCircuitBreakerState: () => import("./circuit-breaker").CircuitBreakerState | null;
 }>;
