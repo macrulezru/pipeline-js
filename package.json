@@ -1,7 +1,17 @@
 {
   "name": "rest-pipeline-js",
-  "version": "1.4.0",
-  "description": "Pipeline Orchestration Utilities for JavaScript REST API Clients",
+  "version": "1.4.1",
+  "description": "Orchestrate REST API calls in sequential and parallel pipelines with retry, caching, rate limiting and SSE streaming. Vanilla JS / Vue 3 / React.",
+  "author": "macrulez <macrulezru@gmail.com> (https://macrulez.ru/en)",
+  "license": "MIT",
+  "homepage": "https://github.com/macrulezru/pipeline-js#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/macrulezru/pipeline-js.git"
+  },
+  "bugs": {
+    "url": "https://github.com/macrulezru/pipeline-js/issues"
+  },
   "main": "dist/cjs/index.js",
   "module": "dist/esm/index.js",
   "types": "dist/esm/index.d.ts",
@@ -23,28 +33,54 @@
     }
   },
   "sideEffects": false,
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
+    "prepublishOnly": "npm run build",
     "build": "tsc -p tsconfig.esm.json && tsc -p tsconfig.cjs.json",
     "test": "vitest run",
     "demo:vue": "npm run start-demo-vite",
     "start-demo-vite": "vite --config vite.config.js"
   },
-  "repository": {
-    "type": "git",
-    "url": ""
-  },
   "keywords": [
     "rest",
     "api",
-    "client",
-    "pipeline"
+    "pipeline",
+    "orchestration",
+    "retry",
+    "cache",
+    "rate-limit",
+    "sse",
+    "axios",
+    "vue",
+    "react",
+    "typescript"
   ],
-  "author": "macrulez",
-  "license": "MIT",
-  "bugs": {
-    "url": "https://github.com/macrulezru/pipeline-js"
+  "peerDependencies": {
+    "react": ">=18.0.0",
+    "react-dom": ">=18.0.0",
+    "vue": ">=3.3.0"
   },
-  "homepage": "https://macrulez.ru/#/en",
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    },
+    "react-dom": {
+      "optional": true
+    },
+    "vue": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "axios": "^1.13.2"
+  },
   "devDependencies": {
     "@testing-library/react": "^16.3.1",
     "@types/react": "^19.2.8",
@@ -54,6 +90,7 @@
     "eslint": "^9.39.2",
     "eslint-plugin-vue": "^10.6.2",
     "jsdom": "^27.4.0",
+    "prismjs": "^1.30.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "scheduler": "^0.27.0",
@@ -62,13 +99,5 @@
     "vitest": "^4.0.17",
     "vue": "^3.5.26",
     "vue-eslint-parser": "^10.2.0"
-  },
-  "peerDependencies": {
-    "react": "^19.2.3",
-    "react-dom": "^19.2.3"
-  },
-  "dependencies": {
-    "axios": "^1.13.2",
-    "prismjs": "^1.30.0"
   }
 }
