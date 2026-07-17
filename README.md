@@ -1424,7 +1424,7 @@ npm run lint            # eslint .
 npm run size             # rebuilds, then checks brotli size per entry point against .size-limit.json
 ```
 
-[`.github/workflows/ci.yml`](./.github/workflows/ci.yml) runs all of the above (lint, build, ESM-load check, tests, type tests, coverage, bundle size) on Node 18/20/22 for every push and pull request.
+[`.github/workflows/ci.yml`](./.github/workflows/ci.yml) runs all of the above (lint, build, ESM-load check, tests, type tests, coverage, bundle size) on Node 20/22/24 for every push and pull request. (The published package itself only requires Node 18+ — see `engines` in `package.json` — but the dev toolchain, Vite 7 / Vitest 4, needs Node 20.19+/22.12+ just to load their own config, so CI can't verify Node 18 anymore.)
 
 ---
 
