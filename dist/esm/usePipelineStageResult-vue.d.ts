@@ -1,6 +1,6 @@
 import type { Ref } from "vue";
-import type { PipelineOrchestrator } from "./pipeline-orchestrator";
-import type { PipelineStepResult } from "./types";
+import type { PipelineOrchestrator } from "./pipeline-orchestrator.js";
+import type { PipelineStepResult } from "./types.js";
 /**
  * Vue composition function для подписки на результат конкретного шага pipeline.
  * Реактивно обновляется при каждом изменении stageResults.

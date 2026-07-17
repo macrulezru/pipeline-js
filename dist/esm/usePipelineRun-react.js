@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 /**
  * React hook to run pipeline and track status/result.
- * @returns [run, { running, result, error, stageResults, abort, rerunStep }]
+ * @returns [run, { running, result, error, stageResults, abort, pause, resume, rerunStep, clearStageResults }]
  */
 export function usePipelineRunReact(orchestrator) {
     const [running, setRunning] = useState(false);
@@ -33,5 +33,9 @@ export function usePipelineRunReact(orchestrator) {
     const pause = useCallback(() => orchestrator.pause(), [orchestrator]);
     const resume = useCallback(() => orchestrator.resume(), [orchestrator]);
     const rerunStep = useCallback((stepKey, options) => orchestrator.rerunStep(stepKey, options), [orchestrator]);
-    return [run, { running, result, error, stageResults, abort, pause, resume, rerunStep }];
+    const clearStageResults = useCallback(() => orchestrator.clearStageResults(), [orchestrator]);
+    return [
+        run,
+        { running, result, error, stageResults, abort, pause, resume, rerunStep, clearStageResults },
+    ];
 }

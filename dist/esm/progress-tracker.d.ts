@@ -1,4 +1,4 @@
-import type { PipelineProgress } from "./types";
+import type { PipelineProgress } from "./types.js";
 type ProgressListener = (progress: PipelineProgress) => void;
 export declare class ProgressTracker {
     private progress;
@@ -12,13 +12,13 @@ export declare class ProgressTracker {
     getProgressRef(): {
         currentStage: number;
         totalStages: number;
-        stageStatuses: Array<import("./types").PipelineStepStatus>;
+        stageStatuses: Array<import("./types.js").PipelineStepStatus>;
     };
     updateStage(stage: number, status: PipelineProgress["stageStatuses"][number]): void;
     getProgress(): {
         currentStage: number;
         totalStages: number;
-        stageStatuses: Array<import("./types").PipelineStepStatus>;
+        stageStatuses: Array<import("./types.js").PipelineStepStatus>;
     };
     subscribe(listener: ProgressListener): () => void;
     private notify;

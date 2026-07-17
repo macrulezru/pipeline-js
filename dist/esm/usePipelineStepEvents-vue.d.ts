@@ -1,4 +1,4 @@
-import type { PipelineOrchestrator } from "./pipeline-orchestrator";
+import type { PipelineOrchestrator } from "./pipeline-orchestrator.js";
 /**
  * Vue composition function for subscribing to step events (success/error/progress) for a specific step
  * @param orchestrator PipelineOrchestrator instance
@@ -37,6 +37,6 @@ export declare function usePipelineLogsVue(orchestrator: PipelineOrchestrator): 
  * @returns rerunStep function
  */
 export declare function useRerunPipelineStepVue(orchestrator: PipelineOrchestrator): (stepKey: string | (string & {}), options?: {
-    onStepPause?: (stepIndex: number, stepResult: unknown, stageResults: Record<string, import("./types").PipelineStepResult>) => Promise<unknown> | unknown;
+    onStepPause?: (stepIndex: number, stepResult: unknown, stageResults: Record<string, import("./types.js").PipelineStepResult>) => Promise<unknown> | unknown;
     externalSignal?: AbortSignal;
-}) => Promise<import("./types").PipelineStepResult | undefined>;
+}) => Promise<import("./types.js").PipelineStepResult | undefined>;

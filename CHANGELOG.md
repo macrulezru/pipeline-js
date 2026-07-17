@@ -1,6 +1,61 @@
 # Changelog
 
-## [Unreleased]
+## [2.0.0] - 2026-07-17
+
+Package-quality and reliability pass: fixes a real ESM-loading bug, closes a
+security-relevant default, adds distributed-deployment support for the rate
+limiter and circuit breaker, adds request tracing and idempotency-key support,
+and adds tooling (CI, coverage, bundle-size checks, type-level tests) to catch
+regressions in these areas going forward. Four changes are breaking — see below.
+
+### Breaking
+
+- **`sanitizeHeaders` now defaults to `true`** (was `false`). Metrics callbacks (`HttpConfig.metrics.onRequestStart/onRequestEnd`) are commonly forwarded to external observability systems, so `Authorization`/`Cookie`/etc. are now masked by default instead of opt-in. Pass `sanitizeHeaders: false` explicitly to get the old (unmasked) behavior, e.g. for local debugging.
+- **`client.invalidateCache()` and `client.clearCache()` are now `async`** (return `Promise<number>` / `Promise<void>` instead of `number` / `void`), to support the new pluggable `cache.store` (see Added) which may be backed by an async store like Redis. Add `await` at call sites; a bare `client.clearCache()` without awaiting still works but no longer guarantees the cache is cleared by the time the next line runs.
+- **`useRestClientReact(config)` now recreates the client on `config` reference change instead of `JSON.stringify(config)` change.** Previously, passing a new inline object literal every render didn't recreate the client (by design), but this silently dropped function-valued fields (`auth`, `metrics`, `onError`, `interceptors`, `adapter`) from the comparison — a new inline callback on a later render was never picked up, so the client kept calling the closure captured on the first render. Reference-identity memoization (standard `useMemo` semantics) has no such gap; memoize your config object yourself (`useMemo`, `useState`, or a module-level constant) if you don't want a new client every render.
+- **`client.getCircuitBreakerState()` is now `async`** (returns `Promise<CircuitBreakerState | null>` instead of the value directly), and so are all of `CircuitBreaker`'s public methods (`getState`/`canExecute`/`onSuccess`/`onFailure`), to support the new pluggable `circuitBreaker.store` (see Added). Without a `store`, these resolve synchronously (no real async work) — only the call site needs `await` added.
+
+### Fixed
+
+- **ESM build was unloadable by Node's native ESM resolver.** `dist/esm/*.js` had no accompanying `package.json` (`{"type":"module"}`), so Node fell back to parsing them as CommonJS and hit a `MODULE_TYPELESS_PACKAGE_JSON` warning plus a reparse; worse, relative imports/exports (`export * from "./rest-client"`) had no file extension, which bundler-style module resolution (used for the TS build) accepts but Node's native ESM resolver rejects outright (`ERR_MODULE_NOT_FOUND`). `import "rest-pipeline-js"` under plain `node` (no bundler) — including the edge/serverless runtimes the `HttpAdapter` feature is meant for — could not load the package at all; only bundler-mediated consumers (Vite/webpack/Next.js) worked. Fixed by adding explicit `.js` extensions to every relative import/export in `src/*.ts`, and by writing `dist/esm/package.json` (`{"type":"module"}`) / `dist/cjs/package.json` (`{"type":"commonjs"}`) as part of `npm run build`. Verified with `npm run verify:esm`, which now also runs in CI.
+- **`useRestClientReact`** — see Breaking above; this was also a correctness fix (stale closures), not just a memoization-key change.
+- **`useRestClientReact`'s `JSON.stringify(config)` dependency ran on every render** regardless of whether anything changed — replaced by the reference-identity fix above.
+
+### Added
+
+#### RestClient
+
+- **`HttpConfig.cache.store`** (new `CacheStore<V>` interface) — swap the built-in per-process `TtlCache` for any backend implementing `get`/`set`/`delete`/`clear` (plus optional `getStale`/`deleteWhere`), so cached responses can be shared across multiple server instances instead of living in one process's memory. See `examples/redis-cache-store.ts`. `cache.get`/`set`/`getStale` calls are now always `await`ed internally, whether the store is sync or async.
+- **`HttpConfig.rateLimit.store`** (new `RateLimiterStore` interface: `incrementWindow(key, intervalMs)`, `acquireConcurrencySlot(key, maxConcurrent, leaseMs)`) — swap the built-in per-process rate limiter for a distributed backend (e.g. Redis), so `maxRequestsPerInterval`/`maxConcurrent` are enforced across every server instance instead of each instance allowing up to N× the configured limit. New `rateLimit.key` (bucket name for sharing a limit across instances/limiters — default: a random per-instance id, so without an explicit `key` a `store` has no effect on sharing) and `rateLimit.leaseMs` (auto-expiry for a concurrency slot if the holder crashes without releasing, default 30s). `incrementWindow` is a fixed-window counter (same edge-of-window burst trade-off as any fixed-window limiter); `acquireConcurrencySlot` is necessarily best-effort/approximate across processes, same as most distributed semaphores in practice — see the interface's JSDoc. See `examples/redis-rate-limiter-store.ts`.
+- **`HttpConfig.circuitBreaker.store`** (new `CircuitBreakerStore` interface: `get`/`set`, optional `incrementCounter`) — swap the built-in per-process circuit breaker state for a distributed backend, so `failureThreshold` consecutive failures across *all* instances open the circuit, instead of each instance needing its own `failureThreshold` before opening (which otherwise lets N× as many failures reach a struggling backend before anything trips). New `circuitBreaker.key` (bucket name, same sharing caveat as `rateLimit.key`). Without `incrementCounter`, falls back to get-compute-set (race-prone under heavy concurrent failures across instances, but still fail-safe). See `examples/redis-circuit-breaker-store.ts`.
+- **`HttpConfig.tracing`** — `generateTraceparent: boolean` adds a W3C [Trace Context](https://www.w3.org/TR/trace-context/) `traceparent` header to every request (skipped if the request already sets one explicitly); `RestRequestConfig.traceId` lets you supply an explicit 32-hex trace id to correlate multiple requests (e.g. `orchestrator.getRunId().replace(/-/g, "")` — a UUID without dashes is exactly 32 hex characters) instead of getting a fresh random one per request. `tracing.provider` (new `TracingProvider`/`TracingSpan` interfaces, deliberately duck-typed to a subset of OpenTelemetry's `Span` API — no `@opentelemetry/api` dependency added) wraps every request in a span: `startSpan()` before, `end()`/`setStatus()`/`recordException()` after, so a real OTel SDK (or Sentry/Datadog/etc.) plugs in with a thin adapter. See `examples/opentelemetry-tracing.ts`.
+- **`RestRequestConfig.idempotencyKey`** — sends an `Idempotency-Key` header (name configurable via `HttpConfig.idempotencyHeaderName`) so a backend that supports idempotency keys can safely dedupe retried mutating requests (POST/PUT/PATCH/DELETE) instead of double-applying them. The library only sends the header — actual deduplication is the backend's responsibility. New `HttpConfig.autoIdempotencyKey` has `RequestExecutor` (the class that actually implements retry — see the RequestExecutor section of the README) auto-generate one key per logical request, once before its retry loop starts, and reuse it across every attempt; doesn't affect direct `client.post()`/etc. calls made outside `RequestExecutor`. See `examples/idempotent-mutations.ts`.
+- **`getRestClient()`'s internal client-instance cache key** now accounts for `cache.store`/`rateLimit.store`/`rateLimit.key`/`circuitBreaker.store`/`circuitBreaker.key`/`circuitBreaker.isFailure`/`tracing`/`autoIdempotencyKey`/`idempotencyHeaderName` (previously, function-valued fields like `store`/`isFailure` were silently dropped by the `JSON.stringify`-based key, since `JSON.stringify` omits function properties — so two configs differing only in *which* store/predicate they passed could incorrectly share one cached client instance).
+
+#### Pipeline Orchestrator
+
+- **`PipelineOptions.maxLogs`** — caps the internal log (`getLogs()`/`exportState().logs`) to the N most recent entries (FIFO eviction). Without it, behavior is unchanged: the log grows without bound for the lifetime of the `orchestrator` instance, which matters for a long-lived instance reused across many `run()`/`rerunStep()` calls without `autoReset`.
+
+#### Vue / React hooks
+
+- **`usePipelineRunReact`** gained `clearStageResults` in its returned object, matching `usePipelineRunVue` (previously only the Vue hook exposed it).
+
+#### Tooling
+
+- **`npm run lint`** — `eslint.config.mjs` (renamed from `.js`) is now actually wired into a script and CI. Switched `no-unused-vars` from the base ESLint rule (which misreports on TS-only constructs like type-literal function signatures) to `@typescript-eslint/no-unused-vars`; turned `@typescript-eslint/no-explicit-any` from fully off to `warn`.
+- **`npm run test:coverage`** (`@vitest/coverage-v8`) with enforced thresholds (`vitest.config.ts`), calibrated to current measured coverage (~72% stmts / ~75% branches / ~59% funcs / ~74% lines). Three previously 0%-covered public modules (`pipeline-validator.ts`, `rate-limiter.ts`, and now `circuit-breaker.ts`'s store path) now have dedicated test files.
+- **`npm run test:types`** (`vitest --typecheck`) — type-level tests (`tests/pipe.test-d.ts`) asserting the `pipe()` builder's `TPrev` threading actually behaves as documented (first step `undefined`, each `.step()` threads the prior return type, `.parallel()`/`.subPipeline()`/`.stream()` don't change it).
+- **`npm run size`** (`size-limit`) — enforces a brotli-compressed size ceiling per entry point (core / `/vue` / `/react`), calibrated to current measured size (~23 KB each).
+- **`.github/workflows/ci.yml`** — runs lint, build, the ESM-load regression check, unit tests, type tests, coverage, and bundle-size checks on Node 18/20/22 for every push/PR.
+- **`examples/`** — focused, copy-pasteable snippets: paginated fan-out with `concurrency`, a `fetch`-based `HttpAdapter` for edge runtimes, an SSE `StreamStageConfig` step, and a Redis-backed `CacheStore`.
+
+### Changed
+
+- **Vue hook tests** (`tests/vue-hooks.test.ts`) now mount composables inside a real component `setup()` via a `withSetup` helper instead of calling them directly, so `onUnmounted` (used internally to unsubscribe from `stageResults`) has an active component instance to attach to. Previously this logged a Vue lifecycle warning on every run and left the unmount-cleanup path unverified.
+
+---
+
+## [1.4.0] - 2026-06-19
 
 ### Fixed
 
@@ -47,6 +102,18 @@
 
 - **`PipelineBuilder<TPrev>`** — the fluent builder is now generic: `.step()` infers and threads the previous step's output type into the next step's `prev`, so TypeScript catches type mismatches across a chain and provides autocomplete. The first step's `prev` is typed `undefined`, matching actual runtime behavior. `.parallel()` / `.subPipeline()` / `.stream()` intentionally don't change the threaded type, since the orchestrator's `prev` for the next step always comes from the last regular `.step()`, never from a parallel group/sub-pipeline/stream. Purely a type-level addition — `PipelineBuilder` still mutates the same instance internally, so existing non-chained usage (calling `.step()` without reassigning the result) keeps working unchanged.
 - `ParallelStageGroup.concurrency` is also exposed through `pipe().parallel(stages, { concurrency })`.
+
+---
+
+## [1.4.1] - 2026-06-20
+
+### Added
+
+- **`LICENSE`** — MIT license file added to the repository and to the published package (`files` already listed it; the file itself was missing).
+
+### Changed
+
+- Cleaned up package metadata: fixed `repository.url`/`bugs.url`/`homepage` to point at the correct GitHub repo (previously partially empty/incorrect), refreshed `description` and `keywords`, and updated the dependency lockfile. No source code changes.
 
 ---
 

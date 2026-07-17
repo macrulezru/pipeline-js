@@ -1,4 +1,4 @@
-import type { HttpConfig, ApiError, ApiResponse, RestRequestConfig } from "./types";
+import type { HttpConfig, ApiError, ApiResponse, RestRequestConfig } from "./types.js";
 type RestClient = ReturnType<typeof createRestClient>;
 export declare function toApiError(error: unknown): ApiError;
 /**
@@ -6,6 +6,13 @@ export declare function toApiError(error: unknown): ApiError;
  * Не мутирует оригинальный объект.
  */
 export declare function sanitizeHeadersMap(headers: Record<string, string> | undefined, extraSensitive?: string[]): Record<string, string> | undefined;
+/**
+ * Строит заголовок `traceparent` (W3C Trace Context, версия "00").
+ * Если `traceId` задан и является валидными 32 hex-символами — используется как
+ * есть (например, `runId` пайплайна без дефисов: UUID без дефисов — ровно
+ * 32 hex-символа); иначе генерируется случайный.
+ */
+export declare function generateTraceparent(traceId?: string): string;
 /** Очистить кэш клиентов (полезно в тестах или при смене конфигурации) */
 export declare function clearRestClientCache(): void;
 export declare function createRestClient(config: HttpConfig): {
@@ -20,7 +27,7 @@ export declare function createRestClient(config: HttpConfig): {
     cancellableRequest: <T = unknown>(key: string, command: string, reqConfig?: RestRequestConfig) => Promise<ApiResponse<T>>;
     cancelRequest: (key: string) => void;
     /** Очистить кэш ответов данного клиента */
-    clearCache: () => void;
+    clearCache: () => Promise<void>;
     /**
      * Точечно инвалидировать кэш ответов по URL (подстрока, RegExp или предикат),
      * не затрагивая записи для других эндпоинтов. Возвращает количество удалённых записей.
@@ -28,9 +35,9 @@ export declare function createRestClient(config: HttpConfig): {
     invalidateCache: (matcher: string | RegExp | ((info: {
         method: string;
         url: string;
-    }) => boolean)) => number;
-    /** Текущее состояние circuit breaker ("closed" | "open" | "half-open"), либо null, если он не настроен. */
-    getCircuitBreakerState: () => import("./circuit-breaker").CircuitBreakerState | null;
+    }) => boolean)) => Promise<number>;
+    /** Текущее состояние circuit breaker ("closed" | "open" | "half-open"), либо null, если он не настроен. `async`, если circuitBreaker.store задан (иначе резолвится мгновенно). */
+    getCircuitBreakerState: () => Promise<import("./circuit-breaker.js").CircuitBreakerState | null>;
 };
 export declare function getRestClient(config: HttpConfig): RestClient;
 export {};

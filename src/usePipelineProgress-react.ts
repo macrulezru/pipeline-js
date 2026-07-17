@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import type { PipelineOrchestrator } from "./pipeline-orchestrator";
-import type { PipelineProgress } from "./types";
+import type { PipelineOrchestrator } from "./pipeline-orchestrator.js";
+import type { PipelineProgress } from "./types.js";
 
 /**
  * React hook for subscribing to pipeline progress

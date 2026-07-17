@@ -1,8 +1,8 @@
 import axios from "axios";
 
-import { TtlCache } from "./cache";
-import { RateLimiter } from "./rate-limiter";
-import { CircuitBreaker, CircuitOpenError } from "./circuit-breaker";
+import { TtlCache } from "./cache.js";
+import { RateLimiter } from "./rate-limiter.js";
+import { CircuitBreaker, CircuitOpenError } from "./circuit-breaker.js";
 import type {
   HttpConfig,
   ApiError,
@@ -11,8 +11,10 @@ import type {
   RequestInterceptor,
   ResponseInterceptor,
   ErrorInterceptor,
-} from "./types";
-import { DEFAULT_SENSITIVE_HEADERS } from "./types";
+  CacheStore,
+  TracingSpan,
+} from "./types.js";
+import { DEFAULT_SENSITIVE_HEADERS } from "./types.js";
 import type { AxiosInstance, AxiosResponse } from "axios";
 
 type RestClient = ReturnType<typeof createRestClient>;
@@ -69,6 +71,38 @@ export function sanitizeHeadersMap(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Tracing: W3C Trace Context (traceparent)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const HEX_TRACE_ID_RE = /^[0-9a-f]{32}$/i;
+
+function randomHex(length: number): string {
+  const g: any = globalThis as any;
+  if (g.crypto?.getRandomValues) {
+    const bytes = new Uint8Array(Math.ceil(length / 2));
+    g.crypto.getRandomValues(bytes);
+    return Array.from(bytes, (b: number) => b.toString(16).padStart(2, "0"))
+      .join("")
+      .slice(0, length);
+  }
+  let out = "";
+  while (out.length < length) out += Math.random().toString(16).slice(2);
+  return out.slice(0, length);
+}
+
+/**
+ * Строит заголовок `traceparent` (W3C Trace Context, версия "00").
+ * Если `traceId` задан и является валидными 32 hex-символами — используется как
+ * есть (например, `runId` пайплайна без дефисов: UUID без дефисов — ровно
+ * 32 hex-символа); иначе генерируется случайный.
+ */
+export function generateTraceparent(traceId?: string): string {
+  const tid = traceId && HEX_TRACE_ID_RE.test(traceId) ? traceId.toLowerCase() : randomHex(32);
+  const spanId = randomHex(16);
+  return `00-${tid}-${spanId}-01`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -119,7 +153,11 @@ export function createRestClient(config: HttpConfig) {
       });
 
   // --- Кэш ответов ---
-  const responseCache = new TtlCache<string, ApiResponse<any>>(1000);
+  // По умолчанию — встроенный in-memory TtlCache; можно заменить на внешний
+  // backend (Redis и т.п.) через config.cache.store для серверных
+  // многоинстансных развёртываний.
+  const responseCache: CacheStore<ApiResponse<any>> =
+    config.cache?.store ?? new TtlCache<string, ApiResponse<any>>(1000);
 
   // --- Rate limiter ---
   const rateLimiter = config.rateLimit
@@ -132,7 +170,10 @@ export function createRestClient(config: HttpConfig) {
     : null;
 
   // --- Sanitization helpers ---
-  const shouldSanitize = config.sanitizeHeaders ?? false;
+  // Secure by default: metrics callbacks are commonly forwarded to external
+  // observability systems, so Authorization/Cookie/etc. are masked unless the
+  // caller explicitly opts out.
+  const shouldSanitize = config.sanitizeHeaders ?? true;
   const extraSensitive = config.sensitiveHeaders ?? [];
 
   // --- Interceptors ---
@@ -191,10 +232,14 @@ export function createRestClient(config: HttpConfig) {
    * Точечная инвалидация кэша ответов: удаляет только записи, чей URL совпадает
    * с matcher (подстрока, RegExp или предикат), а не весь кэш целиком.
    * Полезно вызывать после мутирующих запросов (POST/PUT/DELETE) для связанных GET-эндпоинтов.
+   *
+   * Требует, чтобы cache.store (если задан кастомный) реализовывал deleteWhere() —
+   * без него возвращает 0 и ничего не удаляет.
    */
-  function invalidateCache(
+  async function invalidateCache(
     matcher: string | RegExp | ((info: { method: string; url: string }) => boolean),
-  ): number {
+  ): Promise<number> {
+    if (!responseCache.deleteWhere) return 0;
     return responseCache.deleteWhere((key) => {
       let parsed: { method: string; url: string };
       try {
@@ -220,7 +265,7 @@ export function createRestClient(config: HttpConfig) {
     const fullUrl = `${config.baseURL ?? ""}${command}`;
 
     // --- Circuit breaker: отклоняем без обращения к сети/auth, если circuit открыт ---
-    if (circuitBreaker && !circuitBreaker.canExecute()) {
+    if (circuitBreaker && !(await circuitBreaker.canExecute())) {
       const apiError = toApiError(new CircuitOpenError());
       config.metrics?.onRequestStart?.({
         id: reqId,
@@ -242,7 +287,26 @@ export function createRestClient(config: HttpConfig) {
       authHeaders = { Authorization: `Bearer ${token}` };
     }
 
+    // --- Tracing: W3C traceparent (не перезаписывает явно заданный заголовок) ---
+    let tracingHeaders: Record<string, string> = {};
+    const existingHeaders = req?.headers as Record<string, string> | undefined;
+    const hasExplicitTraceparent =
+      existingHeaders &&
+      Object.keys(existingHeaders).some((h) => h.toLowerCase() === "traceparent");
+    if (config.tracing?.generateTraceparent && !hasExplicitTraceparent) {
+      tracingHeaders = { traceparent: generateTraceparent(req?.traceId) };
+    }
+
+    // --- Idempotency-Key (если задан явно на запросе) ---
+    let idempotencyHeaders: Record<string, string> = {};
+    if (req?.idempotencyKey) {
+      const headerName = config.idempotencyHeaderName ?? "Idempotency-Key";
+      idempotencyHeaders = { [headerName]: req.idempotencyKey };
+    }
+
     const mergedHeaders: Record<string, string> = {
+      ...tracingHeaders,
+      ...idempotencyHeaders,
       ...(req?.headers as Record<string, string> | undefined),
       ...authHeaders,
     };
@@ -252,6 +316,12 @@ export function createRestClient(config: HttpConfig) {
     if (reqInterceptors.length > 0) {
       processedReq = await applyInterceptors(reqInterceptors, processedReq);
     }
+
+    // --- Tracing provider: создаём спан вокруг фактического запроса ---
+    const span: TracingSpan | undefined = config.tracing?.provider?.startSpan(
+      `HTTP ${methodUpper} ${command}`,
+      { "http.method": methodUpper, "http.url": fullUrl },
+    );
 
     config.metrics?.onRequestStart?.({
       id: reqId,
@@ -352,10 +422,12 @@ export function createRestClient(config: HttpConfig) {
         const cacheTtl =
           processedReq?.cacheTtlMs ?? config.cache?.ttlMs ?? 60_000;
         const cacheKey = buildCacheKey(methodUpper, fullUrl, processedReq);
-        responseCache.set(cacheKey, payload, cacheTtl);
+        await responseCache.set(cacheKey, payload, cacheTtl);
       }
 
-      circuitBreaker?.onSuccess();
+      await circuitBreaker?.onSuccess();
+      span?.setStatus?.({ code: "ok" });
+      span?.end();
       return payload;
     } catch (error: unknown) {
       const duration = Date.now() - startTs;
@@ -367,6 +439,10 @@ export function createRestClient(config: HttpConfig) {
       if (config.auth && !_retried && errorStatus === 401) {
         invalidateTokenCache();
         await config.auth.onUnauthorized?.();
+        // Текущий спан относится к этой (неудавшейся из-за 401) попытке;
+        // повторная попытка ниже создаст свой собственный спан.
+        span?.setStatus?.({ code: "error", message: "401 — retrying with refreshed token" });
+        span?.end();
         // Повторяем с флагом _retried=true — второй 401 уже не будет перехвачен
         return _executeRequest<T>(command, req, true);
       }
@@ -382,7 +458,7 @@ export function createRestClient(config: HttpConfig) {
       const isCancellation =
         apiError.code === "REQUEST_CANCELLED" || (error as any)?.name === "AbortError";
       if (circuitBreaker && !isCancellation) {
-        circuitBreaker.onFailure(apiError);
+        await circuitBreaker.onFailure(apiError);
       }
 
       config.metrics?.onRequestEnd?.({
@@ -390,6 +466,10 @@ export function createRestClient(config: HttpConfig) {
         durationMs: duration,
         error: apiError,
       });
+
+      span?.setStatus?.({ code: "error", message: apiError.message });
+      span?.recordException?.(error);
+      span?.end();
 
       // --- Global onError handler ---
       if (config.onError) {
@@ -421,8 +501,8 @@ export function createRestClient(config: HttpConfig) {
     if (cacheEnabled) {
       const cacheKey = buildCacheKey(methodUpper, fullUrl, req);
 
-      if (cacheStrategy === "stale-while-revalidate") {
-        const staleResult = responseCache.getStale(cacheKey, staleMs);
+      if (cacheStrategy === "stale-while-revalidate" && responseCache.getStale) {
+        const staleResult = await responseCache.getStale(cacheKey, staleMs);
         if (staleResult) {
           if (staleResult.isStale) {
             // Фоновое обновление без блокирования
@@ -435,7 +515,7 @@ export function createRestClient(config: HttpConfig) {
           return staleResult.value as ApiResponse<T>;
         }
       } else {
-        const cached = responseCache.get(cacheKey);
+        const cached = await responseCache.get(cacheKey);
         if (cached) return cached as ApiResponse<T>;
       }
     }
@@ -523,15 +603,15 @@ export function createRestClient(config: HttpConfig) {
     cancellableRequest,
     cancelRequest,
     /** Очистить кэш ответов данного клиента */
-    clearCache: () => responseCache.clear(),
+    clearCache: async () => { await responseCache.clear(); },
     /**
      * Точечно инвалидировать кэш ответов по URL (подстрока, RegExp или предикат),
      * не затрагивая записи для других эндпоинтов. Возвращает количество удалённых записей.
      */
     invalidateCache,
-    /** Текущее состояние circuit breaker ("closed" | "open" | "half-open"), либо null, если он не настроен. */
-    getCircuitBreakerState: (): import("./circuit-breaker").CircuitBreakerState | null =>
-      circuitBreaker?.getState() ?? null,
+    /** Текущее состояние circuit breaker ("closed" | "open" | "half-open"), либо null, если он не настроен. `async`, если circuitBreaker.store задан (иначе резолвится мгновенно). */
+    getCircuitBreakerState: async (): Promise<import("./circuit-breaker.js").CircuitBreakerState | null> =>
+      circuitBreaker ? await circuitBreaker.getState() : null,
   };
 }
 
@@ -542,10 +622,18 @@ export function getRestClient(config: HttpConfig): RestClient {
     withCredentials: config.withCredentials,
     headers: config.headers ?? {},
     retry: config.retry ?? {},
-    cache: config.cache ?? {},
-    rateLimit: config.rateLimit ?? {},
-    circuitBreaker: config.circuitBreaker ?? {},
-    sanitizeHeaders: config.sanitizeHeaders ?? false,
+    // Function-valued fields (store/isFailure/provider) are dropped by
+    // JSON.stringify — tracked as booleans instead so two configs that only
+    // differ in *which* store/predicate/provider they pass don't collide on
+    // the same cached client.
+    cache: { ...(config.cache ?? {}), store: !!config.cache?.store },
+    rateLimit: { ...(config.rateLimit ?? {}), store: !!config.rateLimit?.store },
+    circuitBreaker: {
+      ...(config.circuitBreaker ?? {}),
+      store: !!config.circuitBreaker?.store,
+      isFailure: !!config.circuitBreaker?.isFailure,
+    },
+    sanitizeHeaders: config.sanitizeHeaders ?? true,
     sensitiveHeaders: config.sensitiveHeaders ?? [],
     metrics: !!config.metrics,
     auth: !!config.auth,
@@ -553,6 +641,12 @@ export function getRestClient(config: HttpConfig): RestClient {
     interceptors: !!config.interceptors,
     onError: !!config.onError,
     adapter: !!config.adapter,
+    tracing: {
+      generateTraceparent: !!config.tracing?.generateTraceparent,
+      provider: !!config.tracing?.provider,
+    },
+    idempotencyHeaderName: config.idempotencyHeaderName,
+    autoIdempotencyKey: !!config.autoIdempotencyKey,
   });
 
   const cachedClient = restClientCache.get(key);

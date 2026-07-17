@@ -1,5 +1,5 @@
 import { ref, onUnmounted } from "vue";
-import type { PipelineOrchestrator } from "./pipeline-orchestrator";
+import type { PipelineOrchestrator } from "./pipeline-orchestrator.js";
 
 /**
  * Vue composition function for subscribing to step events (success/error/progress) for a specific step

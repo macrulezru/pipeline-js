@@ -1,18 +1,18 @@
-import type { PipelineConfig, PipelineItem } from "./types";
+import type { PipelineConfig, PipelineItem } from "./types.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Type guards (локальные, без импорта из orchestrator)
 // ─────────────────────────────────────────────────────────────────────────────
 
-function isParallelGroup(item: PipelineItem): item is import("./types").ParallelStageGroup {
+function isParallelGroup(item: PipelineItem): item is import("./types.js").ParallelStageGroup {
   return typeof item === "object" && item !== null && "parallel" in item;
 }
 
-function isSubPipeline(item: PipelineItem): item is import("./types").SubPipelineStage {
+function isSubPipeline(item: PipelineItem): item is import("./types.js").SubPipelineStage {
   return typeof item === "object" && item !== null && "subPipeline" in item;
 }
 
-function isStreamStage(item: PipelineItem): item is import("./types").StreamStageConfig {
+function isStreamStage(item: PipelineItem): item is import("./types.js").StreamStageConfig {
   return typeof item === "object" && item !== null && "stream" in item;
 }
 
@@ -100,7 +100,7 @@ function collectAllKeys(
       }
     } else {
       // Обычный шаг
-      const stage = item as import("./types").PipelineStageConfig;
+      const stage = item as import("./types.js").PipelineStageConfig;
       validateKey(stage.key, context, errors);
       keys.push(stage.key);
 

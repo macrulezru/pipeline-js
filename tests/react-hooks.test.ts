@@ -7,7 +7,7 @@ import {
   useRerunPipelineStepReact,
   useRestClientReact,
 } from "rest-pipeline-js/react";
-import { renderHook, act } from "@testing-library/react";
+import { renderHook } from "@testing-library/react";
 
 describe("React hooks", () => {
   const pipelineConfig = {

@@ -1,6 +1,6 @@
 import { ref, onUnmounted } from "vue";
-import type { PipelineOrchestrator } from "./pipeline-orchestrator";
-import type { PipelineProgress } from "./types";
+import type { PipelineOrchestrator } from "./pipeline-orchestrator.js";
+import type { PipelineProgress } from "./types.js";
 
 /**
  * Vue composition function for subscribing to pipeline progress

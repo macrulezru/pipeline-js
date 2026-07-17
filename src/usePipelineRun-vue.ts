@@ -1,6 +1,6 @@
 import { ref, onUnmounted } from "vue";
-import type { PipelineOrchestrator } from "./pipeline-orchestrator";
-import type { PipelineResult, PipelineStepResult } from "./types";
+import type { PipelineOrchestrator } from "./pipeline-orchestrator.js";
+import type { PipelineResult, PipelineStepResult } from "./types.js";
 
 /**
  * Vue composition function to run pipeline and track status/result.

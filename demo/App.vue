@@ -7,6 +7,9 @@ const ParallelDemo = defineAsyncComponent(
 );
 const RetryDemo = defineAsyncComponent(() => import("./views/RetryDemo.vue"));
 const CacheDemo = defineAsyncComponent(() => import("./views/CacheDemo.vue"));
+const TracingDemo = defineAsyncComponent(
+  () => import("./views/TracingDemo.vue"),
+);
 
 const demos = [
   {
@@ -36,6 +39,13 @@ const demos = [
     title: "Cache & Rate Limit",
     subtitle: "HTTP optimization · metrics",
     component: CacheDemo,
+  },
+  {
+    id: "tracing",
+    icon: "🔑",
+    title: "Idempotency & Tracing",
+    subtitle: "autoIdempotencyKey · traceparent",
+    component: TracingDemo,
   },
 ];
 

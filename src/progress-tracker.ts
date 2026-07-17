@@ -1,4 +1,4 @@
-import type { PipelineProgress } from "./types";
+import type { PipelineProgress } from "./types.js";
 
 type ProgressListener = (progress: PipelineProgress) => void;
 

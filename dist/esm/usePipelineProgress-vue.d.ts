@@ -1,5 +1,5 @@
-import type { PipelineOrchestrator } from "./pipeline-orchestrator";
-import type { PipelineProgress } from "./types";
+import type { PipelineOrchestrator } from "./pipeline-orchestrator.js";
+import type { PipelineProgress } from "./types.js";
 /**
  * Vue composition function for subscribing to pipeline progress
  * @param orchestrator PipelineOrchestrator instance
@@ -8,9 +8,9 @@ import type { PipelineProgress } from "./types";
 export declare function usePipelineProgressVue(orchestrator: PipelineOrchestrator): import("vue").Ref<{
     currentStage: number;
     totalStages: number;
-    stageStatuses: Array<import("./types").PipelineStepStatus>;
+    stageStatuses: Array<import("./types.js").PipelineStepStatus>;
 }, PipelineProgress | {
     currentStage: number;
     totalStages: number;
-    stageStatuses: Array<import("./types").PipelineStepStatus>;
+    stageStatuses: Array<import("./types.js").PipelineStepStatus>;
 }>;

@@ -11,6 +11,10 @@
 
 Flexible, modular pipeline orchestrator for REST APIs — sequential and parallel stages, retry with backoff, response caching, rate limiting, auth provider, stream stages (SSE / AsyncIterable), plugin system, and Vue / React integrations — all with a single dependency (axios).
 
+[![CI](https://github.com/macrulezru/pipeline-js/actions/workflows/ci.yml/badge.svg)](https://github.com/macrulezru/pipeline-js/actions/workflows/ci.yml)
+[![npm version](https://img.shields.io/npm/v/rest-pipeline-js.svg)](https://www.npmjs.com/package/rest-pipeline-js)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+
 ---
 
 ## Contents
@@ -18,12 +22,18 @@ Flexible, modular pipeline orchestrator for REST APIs — sequential and paralle
 - [Features](#features)
 - [Installation](#installation)
 - [Demo](#demo)
+- [Examples](#examples)
 - [Quick start](#quick-start)
 - [createRestClient](#createrestclient)
+- [Custom cache backend (CacheStore)](#custom-cache-backend-cachestore)
+- [Distributed rate limiting (RateLimiterStore)](#distributed-rate-limiting-ratelimiterstore)
+- [Idempotency keys](#idempotency-keys)
+- [Request tracing](#request-tracing)
 - [Auth Provider](#auth-provider)
 - [Log Sanitization](#log-sanitization)
 - [RequestExecutor](#requestexecutor)
 - [Circuit breaker](#circuit-breaker)
+- [Distributed circuit breaker (CircuitBreakerStore)](#distributed-circuit-breaker-circuitbreakerstore)
 - [PipelineOrchestrator](#pipelineorchestrator)
 - [Error recovery (errorHandler + recoverStep)](#error-recovery-errorhandler--recoverstep)
 - [Parallel stages](#parallel-stages)
@@ -43,12 +53,15 @@ Flexible, modular pipeline orchestrator for REST APIs — sequential and paralle
 - [Entry points](#entry-points)
 - [Architecture](#architecture)
 - [Bundle size & peer dependencies](#bundle-size--peer-dependencies)
+- [Development](#development)
 
 ---
 
 ## Features
 
-- **`createRestClient()`** — full-featured HTTP client built on top of axios: retry with exponential backoff and `Retry-After` support, response caching (incl. targeted `invalidateCache()`), rate limiting (concurrency + req/interval), circuit breaker, auth provider with automatic 401 refresh and optional token caching, request cancellation by key, custom HTTP adapters
+- **`createRestClient()`** — full-featured HTTP client built on top of axios: retry with exponential backoff and `Retry-After` support, response caching with a pluggable `CacheStore` backend (incl. targeted `invalidateCache()`), rate limiting (concurrency + req/interval) with a pluggable distributed `RateLimiterStore`, circuit breaker with a pluggable distributed `CircuitBreakerStore`, auth provider with automatic 401 refresh and optional token caching, request cancellation by key, custom HTTP adapters
+- **Request tracing** — W3C `traceparent` header generation plus a `TracingProvider` hook (duck-typed against OpenTelemetry's `Span` API) for wiring in a real tracing backend
+- **Idempotency keys** — `Idempotency-Key` header on mutating requests, manual or auto-generated per logical request across retry attempts
 - **`PipelineOrchestrator`** — sequential and parallel stage execution; each stage has `condition`, `before`, `request`, `after`, `errorHandler` hooks (all receive the pipeline's `AbortSignal`); `sharedData` pool shared across all stages
 - **Error recovery** — `errorHandler` can return `recoverStep(data)` to turn a failed stage back into a successful one and keep the pipeline going, instead of only transforming the error
 - **Global middleware** — `beforeEach` / `afterEach` / `onError` hooks that apply to every stage without modifying individual configs
@@ -61,7 +74,7 @@ Flexible, modular pipeline orchestrator for REST APIs — sequential and paralle
 - **`validatePipelineConfig()`** — catch duplicate keys, empty keys, type errors before runtime
 - **Plugin system** — install reusable behavior (logging, analytics, etc.); cleanup via `destroy()`
 - **Persist adapter** — pluggable save/load interface; auto-save after each stage
-- **Log sanitization** — mask sensitive headers (`authorization`, `x-api-key`, `cookie`, …) in metrics callbacks
+- **Log sanitization** — mask sensitive headers (`authorization`, `x-api-key`, `cookie`, …) in metrics callbacks, on by default
 - **Vue integration** — `usePipelineRunVue`, `usePipelineProgressVue`, and more (import from `rest-pipeline-js/vue`)
 - **React integration** — `usePipelineRunReact`, `usePipelineProgressReact`, and more (import from `rest-pipeline-js/react`)
 - **Tree-shakeable** — `sideEffects: false`; Vue and React entry points are code-split
@@ -105,6 +118,24 @@ Opens at `http://localhost:3000`. The demo app lives in the `demo/` directory.
 | 🔀 **Parallel Loading**   | `pipe()` fluent builder with `.parallel([])` — 3 sources queried simultaneously, timing breakdown           |
 | 🛡️ **Retry & Recovery**   | Configurable flaky stage with exponential backoff, event log, `abort()`, pause/resume between stages        |
 | ⚡ **Cache & Rate Limit** | `createRestClient()` with cache TTL — see server vs cache timing; rate limiter burst visualization          |
+| 🔑 **Idempotency & Tracing** | A flaky mutation retried by `RequestExecutor` with `autoIdempotencyKey` — same key on every attempt; `tracing.generateTraceparent` correlating requests under one trace-id |
+
+---
+
+## Examples
+
+Focused, copy-pasteable snippets (as opposed to the interactive demo app above) live in [`examples/`](./examples):
+
+| File                                                              | Shows                                                                              |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
+| [`pagination-fanout.ts`](./examples/pagination-fanout.ts)         | Fanning out many paginated requests in parallel with a `concurrency` cap            |
+| [`edge-fetch-adapter.ts`](./examples/edge-fetch-adapter.ts)       | A custom `HttpAdapter` on native `fetch` for Cloudflare Workers / Deno / edge       |
+| [`sse-stream.ts`](./examples/sse-stream.ts)                       | A `StreamStageConfig` step consuming a Server-Sent Events endpoint chunk by chunk   |
+| [`redis-cache-store.ts`](./examples/redis-cache-store.ts)         | A `CacheStore` backed by Redis, shared across multiple server instances             |
+| [`redis-rate-limiter-store.ts`](./examples/redis-rate-limiter-store.ts) | A `RateLimiterStore` backed by Redis, shared across multiple server instances |
+| [`redis-circuit-breaker-store.ts`](./examples/redis-circuit-breaker-store.ts) | A `CircuitBreakerStore` backed by Redis, shared across multiple server instances |
+| [`opentelemetry-tracing.ts`](./examples/opentelemetry-tracing.ts) | W3C `traceparent` + a `TracingProvider` hook, correlated with a pipeline's `runId`  |
+| [`idempotent-mutations.ts`](./examples/idempotent-mutations.ts)   | `Idempotency-Key` on mutating requests, manual or auto-generated across retries     |
 
 ---
 
@@ -172,9 +203,9 @@ Creates a REST client with advanced HTTP features.
 | `request(url, config?)`                 | Generic request                    |
 | `cancellableRequest(key, url, config?)` | Request cancellable by key         |
 | `cancelRequest(key)`                    | Cancel request by key              |
-| `clearCache()`                          | Clear this client's entire response cache |
-| `invalidateCache(matcher)`               | Clear only cache entries whose URL matches `matcher` (substring, `RegExp`, or `(info) => boolean`); returns the number of entries removed |
-| `getCircuitBreakerState()`              | `"closed" \| "open" \| "half-open"`, or `null` if `circuitBreaker` isn't configured |
+| `clearCache()`                          | Clear this client's entire response cache (`async`) |
+| `invalidateCache(matcher)`               | Clear only cache entries whose URL matches `matcher` (substring, `RegExp`, or `(info) => boolean`); returns (`Promise<number>`) the number of entries removed |
+| `getCircuitBreakerState()`              | `Promise<"closed" \| "open" \| "half-open" \| null>` — `null` if `circuitBreaker` isn't configured. Resolves synchronously (no real async work) unless `circuitBreaker.store` is set |
 
 ### HttpConfig options
 
@@ -191,18 +222,28 @@ Creates a REST client with advanced HTTP features.
 | `retry.maxRetryAfterMs`            | Max wait from `Retry-After` header in ms (default: `60000`)                      |
 | `cache.enabled`                    | Enable response caching for GET requests                                         |
 | `cache.ttlMs`                      | Cache TTL in ms                                                                  |
+| `cache.strategy`                   | `"strict"` (default) or `"stale-while-revalidate"`                              |
+| `cache.staleMs`                    | Extra time after `ttlMs` a stale response may still be served (SWR strategy)     |
+| `cache.store`                      | Custom `CacheStore` backend (e.g. Redis) instead of the built-in in-memory `TtlCache` — see [Custom cache backend](#custom-cache-backend-cachestore) |
 | `rateLimit.maxConcurrent`          | Max simultaneous requests                                                        |
 | `rateLimit.maxRequestsPerInterval` | Max requests per time window                                                     |
 | `rateLimit.intervalMs`             | Time window size in ms                                                           |
+| `rateLimit.store`                  | Custom `RateLimiterStore` backend (e.g. Redis) for a limit shared across server instances — see [Distributed rate limiting](#distributed-rate-limiting-ratelimiterstore) |
+| `rateLimit.key`                    | Bucket name when using a shared `rateLimit.store` (default: random per-instance id — without an explicit `key`, a `store` has no sharing effect) |
+| `rateLimit.leaseMs`                | Auto-expiry (ms) for a `store`-backed concurrency slot if its holder crashes without releasing (default: `30000`) |
 | `metrics.onRequestStart`           | Callback on request start                                                        |
 | `metrics.onRequestEnd`             | Callback on request end (includes duration and bytes)                            |
 | `auth.getToken`                    | Async function returning a Bearer token (called before every request, unless `auth.tokenTtlMs` is set) |
 | `auth.onUnauthorized`              | Optional async callback on 401 — refresh the token here; request is retried once |
 | `auth.tokenTtlMs`                  | Cache `getToken()`'s result for this many ms instead of calling it before every request; invalidated automatically on 401 |
-| `sanitizeHeaders`                  | Mask sensitive headers in metrics callbacks (default: `false`)                   |
+| `sanitizeHeaders`                  | Mask sensitive headers in metrics callbacks (default: `true` — secure by default) |
 | `sensitiveHeaders`                 | Additional headers to mask (extends `DEFAULT_SENSITIVE_HEADERS`)                 |
 | `adapter`                          | Custom HTTP adapter (e.g. native `fetch`) — replaces built-in axios              |
-| `circuitBreaker`                   | See [Circuit breaker](#circuit-breaker) — `{ failureThreshold, openMs, successThreshold?, isFailure? }` |
+| `circuitBreaker`                   | See [Circuit breaker](#circuit-breaker) — `{ failureThreshold, openMs, successThreshold?, isFailure?, store?, key? }` |
+| `tracing.generateTraceparent`      | Add a W3C `traceparent` header to every request (default: `false`) — see [Request tracing](#request-tracing) |
+| `tracing.provider`                 | `TracingProvider` hook creating a span per request — see [Request tracing](#request-tracing) |
+| `idempotencyHeaderName`            | Header name used for `RestRequestConfig.idempotencyKey` (default: `"Idempotency-Key"`) — see [Idempotency keys](#idempotency-keys) |
+| `autoIdempotencyKey`               | Have `RequestExecutor` auto-generate an idempotency key per logical request (default: `false`) — see [Idempotency keys](#idempotency-keys) |
 
 ### Per-request cache override
 
@@ -216,15 +257,45 @@ const res = await client.get("/data", {
 
 ### Targeted cache invalidation
 
-`clearCache()` wipes the entire response cache. To invalidate only the entries affected by a mutation (e.g. after a `POST`/`PUT`/`DELETE`), use `invalidateCache()` instead — it accepts a substring, a `RegExp`, or a predicate over `{ method, url }`, and returns how many entries were removed:
+`clearCache()` wipes the entire response cache. To invalidate only the entries affected by a mutation (e.g. after a `POST`/`PUT`/`DELETE`), use `invalidateCache()` instead — it accepts a substring, a `RegExp`, or a predicate over `{ method, url }`, and resolves to how many entries were removed. Both methods are `async` (so a custom `cache.store` can be backed by a real network call):
 
 ```js
 await client.post("/users/1/orders", newOrder);
 
-client.invalidateCache("/users/1"); // substring match on the cached URL
-client.invalidateCache(/^https:\/\/api\.example\.com\/users\/\d+$/);
-client.invalidateCache(({ method, url }) => method === "GET" && url.includes("/orders"));
+await client.invalidateCache("/users/1"); // substring match on the cached URL
+await client.invalidateCache(/^https:\/\/api\.example\.com\/users\/\d+$/);
+await client.invalidateCache(({ method, url }) => method === "GET" && url.includes("/orders"));
 ```
+
+### Custom cache backend (CacheStore)
+
+By default, `cache.enabled: true` caches responses in an in-memory `TtlCache` scoped to that one client instance — fine for a browser SPA, but each server process has its own cold cache in a multi-instance deployment. Pass `cache.store` to use any backend implementing `CacheStore` instead — Redis, for example, so cached responses are shared across every instance:
+
+```ts
+import { createRestClient, type CacheStore, type ApiResponse } from "rest-pipeline-js";
+
+const redisStore: CacheStore<ApiResponse<unknown>> = {
+  async get(key) {
+    const raw = await redis.get(key);
+    return raw ? JSON.parse(raw) : undefined;
+  },
+  async set(key, value, ttlMs) {
+    await redis.set(key, JSON.stringify(value), "PX", ttlMs);
+  },
+  async delete(key) { await redis.del(key); },
+  async clear() { await redis.flushdb(); },
+  // getStale/deleteWhere are optional — without them, the
+  // 'stale-while-revalidate' strategy and invalidateCache() gracefully
+  // degrade (see CacheStore's JSDoc) instead of throwing.
+};
+
+const client = createRestClient({
+  baseURL: "https://api.example.com",
+  cache: { enabled: true, ttlMs: 60_000, store: redisStore },
+});
+```
+
+See [`examples/redis-cache-store.ts`](./examples/redis-cache-store.ts) for the full annotated version.
 
 ### Full example
 
@@ -264,6 +335,117 @@ const req = client.cancellableRequest("my-key", "/search", {
 // Cancel it any time:
 client.cancelRequest("my-key");
 ```
+
+---
+
+## Distributed rate limiting (RateLimiterStore)
+
+By default, `rateLimit` is enforced in-memory, scoped to that one client instance — fine for a browser SPA, but each server process enforces its own limit in a multi-instance deployment, so N instances effectively allow N× the configured limit. Pass `rateLimit.store` to share the limit across instances (e.g. via Redis):
+
+```ts
+import { createRestClient, type RateLimiterStore } from "rest-pipeline-js";
+
+const redisRateLimiterStore: RateLimiterStore = {
+  async incrementWindow(key, intervalMs) {
+    const count = await redis.incr(key);
+    if (count === 1) await redis.pexpire(key, intervalMs);
+    return count;
+  },
+  async acquireConcurrencySlot(key, maxConcurrent, leaseMs) {
+    // Needs an atomic increment-if-below-cap (typically a small Lua script) —
+    // see examples/redis-rate-limiter-store.ts for a full sketch.
+    // ...
+  },
+};
+
+const client = createRestClient({
+  baseURL: "https://api.example.com",
+  rateLimit: {
+    maxRequestsPerInterval: 100,
+    intervalMs: 60_000,
+    store: redisRateLimiterStore,
+    key: "api-example-com", // shared bucket name across every instance
+  },
+});
+```
+
+Notes:
+- Without an explicit `key`, every `RateLimiter` instance gets its own random key — a `store` only has a sharing effect once multiple limiters (across processes) use the *same* `key`.
+- `incrementWindow` is a fixed-window counter — it has the standard edge-of-window burst characteristic of any fixed-window rate limiter (as opposed to a sliding log). This is a deliberate simplicity trade-off; implement a sliding-window store yourself if you need stricter bounds.
+- `acquireConcurrencySlot` (`maxConcurrent`) cannot be made exactly correct across processes without a central lock service — treat it as an approximate cap, the way most distributed semaphores work in practice. `leaseMs` bounds how long a slot is held if its holder crashes without releasing.
+
+See [`examples/redis-rate-limiter-store.ts`](./examples/redis-rate-limiter-store.ts) for the full annotated version.
+
+---
+
+## Idempotency keys
+
+Send an `Idempotency-Key` header on mutating requests (POST/PUT/PATCH/DELETE) so a backend that supports idempotency keys (Stripe, PayPal, and plenty of in-house APIs) can safely dedupe retried requests instead of double-applying them. The library only sends the header — deduplication is the backend's job.
+
+```js
+// Manual: generate the key once per logical operation, reuse across attempts
+const idempotencyKey = crypto.randomUUID();
+await client.post("/orders", cart, { idempotencyKey });
+
+// Custom header name
+const client = createRestClient({ idempotencyHeaderName: "X-Idempotency-Key" });
+```
+
+`RequestExecutor` (the class that actually implements retry — see [RequestExecutor](#requestexecutor); `createRestClient()`'s own `client.post()`/etc. don't retry on their own) can generate the key for you automatically:
+
+```js
+import { RequestExecutor } from "rest-pipeline-js";
+
+const executor = new RequestExecutor({
+  baseURL: "https://api.example.com",
+  autoIdempotencyKey: true, // generates one key per logical request, reused across every retry attempt
+  retry: { attempts: 2, delayMs: 300, backoffMultiplier: 2 },
+});
+
+await executor.execute("/orders", { method: "POST", data: { items: ["sku-1"] } });
+```
+
+`autoIdempotencyKey` only affects mutating methods (POST/PUT/PATCH/DELETE) and only generates a key if the caller didn't already provide one via `idempotencyKey`. See [`examples/idempotent-mutations.ts`](./examples/idempotent-mutations.ts).
+
+---
+
+## Request tracing
+
+Two independent features:
+
+**`tracing.generateTraceparent`** adds a [W3C Trace Context](https://www.w3.org/TR/trace-context/) `traceparent` header to every request (skipped if the request already sets one explicitly), so any backend/APM that understands trace context can correlate the call with the rest of a distributed trace:
+
+```js
+const client = createRestClient({
+  baseURL: "https://api.example.com",
+  tracing: { generateTraceparent: true },
+});
+```
+
+Pass `traceId` on a request to correlate multiple calls under one trace instead of a fresh random one each time — a pipeline's `runId` (UUID) with its dashes stripped is exactly the 32 hex characters the format needs:
+
+```js
+await client.get("/users/1", { traceId: orchestrator.getRunId().replace(/-/g, "") });
+```
+
+**`tracing.provider`** wraps every request in a real span in your tracing system. Its shape (`TracingProvider`/`TracingSpan`) is deliberately a subset of OpenTelemetry's `Span` API (duck-typed — this package doesn't depend on `@opentelemetry/api`), so a real OTel SDK plugs in as a thin adapter:
+
+```ts
+import { trace } from "@opentelemetry/api";
+import { createRestClient, type TracingProvider } from "rest-pipeline-js";
+
+const tracer = trace.getTracer("my-app");
+const otelProvider: TracingProvider = {
+  startSpan: (name, attributes) => tracer.startSpan(name, { attributes }),
+};
+
+const client = createRestClient({
+  baseURL: "https://api.example.com",
+  tracing: { generateTraceparent: true, provider: otelProvider },
+});
+```
+
+`startSpan(name, attributes)` is called before each request; `span.end()` after; `span.setStatus()`/`span.recordException()` on error (both optional on `TracingSpan` — a minimal provider only needs `end()`). See [`examples/opentelemetry-tracing.ts`](./examples/opentelemetry-tracing.ts) for the full annotated version, including a dependency-free console-logging provider.
 
 ---
 
@@ -318,7 +500,7 @@ import { createRestClient, DEFAULT_SENSITIVE_HEADERS } from "rest-pipeline-js";
 
 const client = createRestClient({
   baseURL: "https://api.example.com",
-  sanitizeHeaders: true, // opt-in — disabled by default
+  // sanitizeHeaders defaults to true — masking is on unless you opt out below.
   sensitiveHeaders: ["x-internal-secret"], // extend the default list
   metrics: {
     onRequestStart: (info) => {
@@ -327,6 +509,9 @@ const client = createRestClient({
     },
   },
 });
+
+// To see raw headers (e.g. local debugging only), opt out explicitly:
+// createRestClient({ ..., sanitizeHeaders: false });
 ```
 
 Use `sanitizeHeadersMap` directly:
@@ -394,13 +579,53 @@ try {
   }
 }
 
-client.getCircuitBreakerState(); // "closed" | "open" | "half-open"
+await client.getCircuitBreakerState(); // "closed" | "open" | "half-open" — async
 ```
 
 - Works on top of retry, cache, rate limiting, auth, and custom `adapter`s — it sits around the actual network call, same as those features.
 - Each retry attempt (from `RequestExecutor`/`request.retry`) counts as its own pass through the breaker, so a flaky endpoint with retries enabled opens the circuit faster, not slower.
 - Cancelled/aborted requests are never counted as failures.
 - Not set by default — without `circuitBreaker`, behavior is unchanged.
+- `getCircuitBreakerState()` (and every `CircuitBreaker` method) is `async` — it resolves synchronously (no real async work) unless `circuitBreaker.store` is set (see below).
+
+---
+
+## Distributed circuit breaker (CircuitBreakerStore)
+
+By default, circuit breaker state lives in-memory, scoped to that one client instance — each server process needs its own `failureThreshold` consecutive failures before it opens, so a struggling backend in a multi-instance deployment absorbs N× as many failures as configured before anything trips. Pass `circuitBreaker.store` to share open/closed/half-open state across instances:
+
+```ts
+import { createRestClient, type CircuitBreakerStore } from "rest-pipeline-js";
+
+const redisCircuitBreakerStore: CircuitBreakerStore = {
+  async get(key) {
+    const raw = await redis.get(key);
+    return raw ? JSON.parse(raw) : null;
+  },
+  async set(key, state, ttlMs) {
+    await redis.set(key, JSON.stringify(state), "PX", ttlMs);
+  },
+  // Optional: atomic increment, avoids a get+compute+set race between
+  // concurrent requests on different instances.
+  async incrementCounter(key, field, ttlMs) {
+    const n = await redis.incr(`${key}:${field}`);
+    if (n === 1) await redis.pexpire(`${key}:${field}`, ttlMs);
+    return n;
+  },
+};
+
+const client = createRestClient({
+  baseURL: "https://api.example.com",
+  circuitBreaker: {
+    failureThreshold: 5,
+    openMs: 30_000,
+    store: redisCircuitBreakerStore,
+    key: "api-example-com", // shared bucket name across every instance
+  },
+});
+```
+
+As with `rateLimit.key`, an explicit `key` is what makes multiple `CircuitBreaker` instances (across processes) actually share state — without it, each gets its own random key. Without `incrementCounter`, the breaker falls back to get-compute-set, which can under-count failures under heavy concurrent load across instances but remains fail-safe. See [`examples/redis-circuit-breaker-store.ts`](./examples/redis-circuit-breaker-store.ts) for the full annotated version.
 
 ---
 
@@ -441,7 +666,7 @@ new PipelineOrchestrator({
 | `on(eventName, handler)`                   | Subscribe to any event (`step:<key>:start\|success\|error\|skipped\|progress`, `log`) |
 | `onStepStart/Finish/Error(handler)`        | Subscribe to stage lifecycle events                                                   |
 | `getProgress()`                            | Get current progress snapshot                                                         |
-| `getLogs()`                                | Get all pipeline logs                                                                 |
+| `getLogs()`                                | Get all pipeline logs (capped at `options.maxLogs` entries, if set — see below)       |
 | `clearStageResults()`                      | Reset results and progress                                                            |
 
 ### Stage parameters (PipelineStageConfig)
@@ -695,6 +920,21 @@ console.log(orchestrator2.getLogs()); // restored logs (timestamps as Date objec
 ```
 
 `exportState()` returns `{ stageResults, logs }` — a plain JSON-serializable object. Timestamps in logs are stored as ISO strings and restored as `Date` objects on `importState`.
+
+### Capping log growth (`maxLogs`)
+
+`logs` grows by one entry per step event and is never trimmed automatically — fine for a single `run()`, but an `orchestrator` instance reused across many runs without `autoReset` (e.g. a long-lived SPA singleton) accumulates logs indefinitely. Set `options.maxLogs` to keep only the N most recent entries (oldest evicted first):
+
+```js
+const orchestrator = new PipelineOrchestrator({
+  config: {
+    stages: [/* ... */],
+    options: { maxLogs: 500 },
+  },
+});
+```
+
+Without `maxLogs`, behavior is unchanged from previous versions.
 
 ---
 
@@ -1052,7 +1292,7 @@ const orchestrator = new PipelineOrchestrator({
 
 export function PipelineComponent() {
   const progress = usePipelineProgressReact(orchestrator);
-  const [run, { running, result, error, abort, pause, resume, rerunStep }] =
+  const [run, { running, result, error, abort, pause, resume, rerunStep, clearStageResults }] =
     usePipelineRunReact(orchestrator);
 
   return (
@@ -1078,11 +1318,11 @@ Hooks (import from `rest-pipeline-js/react`):
 | Hook                                                          | Returns                                                                            | Description                            |
 | ------------------------------------------------------------- | ---------------------------------------------------------------------------------- | -------------------------------------- |
 | `usePipelineProgressReact(orchestrator)`                      | `PipelineProgress`                                                                 | Reactive progress                      |
-| `usePipelineRunReact(orchestrator)`                           | `[run, { running, result, error, stageResults, abort, pause, resume, rerunStep }]` | Run pipeline and get state             |
+| `usePipelineRunReact(orchestrator)`                           | `[run, { running, result, error, stageResults, abort, pause, resume, rerunStep, clearStageResults }]` | Run pipeline and get state |
 | `usePipelineStepEventReact(orchestrator, stepKey, eventType)` | `any`                                                                              | Last payload for a specific step event |
 | `usePipelineLogsReact(orchestrator)`                          | `log[]`                                                                            | Reactive logs                          |
 | `useRerunPipelineStepReact(orchestrator)`                     | `function`                                                                         | Bound `rerunStep`                      |
-| `useRestClientReact(config)`                                  | `RestClient`                                                                       | Memoized REST client                   |
+| `useRestClientReact(config)`                                  | `RestClient`                                                                       | Memoized REST client — recreated when `config` is a *new object reference*; memoize it yourself (`useMemo`/`useState`/module-level constant) to avoid recreating it every render |
 | `usePipelineStageResultReact(orchestrator, stepKey)`          | `PipelineStepResult \| null`                                                       | Result of a single stage               |
 
 ---
@@ -1167,7 +1407,24 @@ rest-pipeline-js
 | `rest-pipeline-js/vue`   | `vue ^3.3`                   | Core + Vue composables                                           |
 | `rest-pipeline-js/react` | `react ^19`, `react-dom ^19` | Core + React hooks                                               |
 
-The package ships as tree-shakeable ESM (`dist/esm/`) and CommonJS (`dist/cjs/`). The `/vue` and `/react` entry points are code-split — importing one does not bundle the other.
+The package ships as tree-shakeable ESM (`dist/esm/`) and CommonJS (`dist/cjs/`), each with its own `package.json` (`{"type":"module"}` / `{"type":"commonjs"}`) so Node's native ESM resolver can load it directly — not just bundlers. The `/vue` and `/react` entry points are code-split — importing one does not bundle the other. Size is enforced in CI (see below); current brotli size per entry point is ~23 KB with all dependencies (`axios` for core; `vue`/`react` are peer deps, excluded).
+
+---
+
+## Development
+
+```bash
+npm install
+npm run build          # tsc → dist/esm + dist/cjs, then writes the dist/*/package.json type markers
+npm run verify:esm     # loads every entry point with node's native ESM resolver (regression guard)
+npm test                # vitest — unit tests
+npm run test:types      # vitest --typecheck — type-level tests for pipe()'s TPrev threading
+npm run test:coverage   # vitest run --coverage, enforces the thresholds in vitest.config.ts
+npm run lint            # eslint .
+npm run size             # rebuilds, then checks brotli size per entry point against .size-limit.json
+```
+
+[`.github/workflows/ci.yml`](./.github/workflows/ci.yml) runs all of the above (lint, build, ESM-load check, tests, type tests, coverage, bundle size) on Node 18/20/22 for every push and pull request.
 
 ---
 

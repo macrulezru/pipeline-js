@@ -1,5 +1,5 @@
-import { PipelineOrchestrator } from "./pipeline-orchestrator";
-import type { PipelineItem, PipelineStageConfig, SubPipelineStage, StreamStageConfig, PipelineConfig, PipelineMiddleware, PipelineOptions, HttpConfig } from "./types";
+import { PipelineOrchestrator } from "./pipeline-orchestrator.js";
+import type { PipelineItem, PipelineStageConfig, SubPipelineStage, StreamStageConfig, PipelineConfig, PipelineMiddleware, PipelineOptions, HttpConfig } from "./types.js";
 export interface CreatePipelineOptions {
     /** HTTP-конфиг для всех шагов, использующих executor (URL-шаги) */
     httpConfig?: HttpConfig;

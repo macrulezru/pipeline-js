@@ -1,4 +1,4 @@
-import type { ApiError } from './types';
+import type { ApiError } from './types.js';
 
 export class ErrorHandler {
   handle(error: any, _stageKey: string): ApiError {
