@@ -1,7 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.RequestExecutor = void 0;
-const rest_client_1 = require("./rest-client");
+const rest_client_js_1 = require("./rest-client.js");
 /** Небольшой хелпер: sleep с поддержкой AbortSignal */
 function sleep(ms, signal) {
     return new Promise((resolve, reject) => {
@@ -35,6 +35,14 @@ function mergeSignals(a, b) {
     }
     return controller.signal;
 }
+const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+function generateIdempotencyKey() {
+    var _a;
+    const g = globalThis;
+    if ((_a = g.crypto) === null || _a === void 0 ? void 0 : _a.randomUUID)
+        return g.crypto.randomUUID();
+    return `idem-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
 /**
  * Разбирает значение заголовка Retry-After в миллисекунды.
  * Поддерживает оба формата: число секунд и HTTP-дата.
@@ -58,7 +66,7 @@ class RequestExecutor {
     constructor(httpConfig) {
         var _a;
         this.httpConfig = httpConfig;
-        this.client = (0, rest_client_1.getRestClient)(httpConfig);
+        this.client = (0, rest_client_js_1.getRestClient)(httpConfig);
         this.retryCfg = (_a = httpConfig.retry) !== null && _a !== void 0 ? _a : {};
     }
     /**
@@ -71,12 +79,21 @@ class RequestExecutor {
      * - внешнего AbortSignal (от orchestrator.abort())
      */
     async execute(command, reqConfig, retryCount, timeoutMs = 10000, externalSignal) {
-        var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l;
+        var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m;
         const maxAttempts = (_a = retryCount !== null && retryCount !== void 0 ? retryCount : this.retryCfg.attempts) !== null && _a !== void 0 ? _a : 0;
         const baseDelay = (_b = this.retryCfg.delayMs) !== null && _b !== void 0 ? _b : 0;
         const backoffMult = (_c = this.retryCfg.backoffMultiplier) !== null && _c !== void 0 ? _c : 1;
         const retriableStatus = this.retryCfg.retriableStatus;
         const maxRetryAfterMs = (_d = this.retryCfg.maxRetryAfterMs) !== null && _d !== void 0 ? _d : 60000;
+        // --- autoIdempotencyKey: сгенерировать ОДИН РАЗ до начала retry-цикла,
+        // чтобы все попытки одного логического запроса несли один и тот же ключ ---
+        let effectiveReqConfig = reqConfig;
+        if (this.httpConfig.autoIdempotencyKey && !(reqConfig === null || reqConfig === void 0 ? void 0 : reqConfig.idempotencyKey)) {
+            const method = ((_e = reqConfig === null || reqConfig === void 0 ? void 0 : reqConfig.method) !== null && _e !== void 0 ? _e : 'GET').toString().toUpperCase();
+            if (MUTATING_METHODS.has(method)) {
+                effectiveReqConfig = { ...reqConfig, idempotencyKey: generateIdempotencyKey() };
+            }
+        }
         let attempt = 0;
         let lastError;
         while (attempt <= maxAttempts) {
@@ -92,7 +109,7 @@ class RequestExecutor {
             const signal = mergeSignals(externalSignal, timeoutController.signal);
             try {
                 const result = await this.client.request(command, {
-                    ...reqConfig,
+                    ...effectiveReqConfig,
                     signal,
                 });
                 return result;
@@ -106,7 +123,7 @@ class RequestExecutor {
                 if (isAbort)
                     throw err;
                 // Проверяем retriableStatus
-                const httpStatus = (_f = (_e = err === null || err === void 0 ? void 0 : err.response) === null || _e === void 0 ? void 0 : _e.status) !== null && _f !== void 0 ? _f : err === null || err === void 0 ? void 0 : err.status;
+                const httpStatus = (_g = (_f = err === null || err === void 0 ? void 0 : err.response) === null || _f === void 0 ? void 0 : _f.status) !== null && _g !== void 0 ? _g : err === null || err === void 0 ? void 0 : err.status;
                 if (retriableStatus && httpStatus !== undefined) {
                     if (!retriableStatus.includes(httpStatus)) {
                         throw err;
@@ -116,7 +133,7 @@ class RequestExecutor {
                 if (attempt > maxAttempts)
                     break;
                 // ── Retry-After: приоритет над backoff-задержкой ─────────────────
-                const retryAfterHeader = (_j = (_h = (_g = err === null || err === void 0 ? void 0 : err.response) === null || _g === void 0 ? void 0 : _g.headers) === null || _h === void 0 ? void 0 : _h['retry-after']) !== null && _j !== void 0 ? _j : (_l = (_k = err === null || err === void 0 ? void 0 : err.response) === null || _k === void 0 ? void 0 : _k.headers) === null || _l === void 0 ? void 0 : _l['Retry-After'];
+                const retryAfterHeader = (_k = (_j = (_h = err === null || err === void 0 ? void 0 : err.response) === null || _h === void 0 ? void 0 : _h.headers) === null || _j === void 0 ? void 0 : _j['retry-after']) !== null && _k !== void 0 ? _k : (_m = (_l = err === null || err === void 0 ? void 0 : err.response) === null || _l === void 0 ? void 0 : _l.headers) === null || _m === void 0 ? void 0 : _m['Retry-After'];
                 let delay;
                 if (retryAfterHeader !== undefined) {
                     const parsed = parseRetryAfter(retryAfterHeader, maxRetryAfterMs);

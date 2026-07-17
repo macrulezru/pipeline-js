@@ -1,4 +1,4 @@
-import type { PipelineConfig, PipelineResult, PipelineStepResult, PipelineStepStatus, PipelineStepEvent, PipelineStepEventHandler, PipelineExportedState } from "./types";
+import type { PipelineConfig, PipelineResult, PipelineStepResult, PipelineStepStatus, PipelineStepEvent, PipelineStepEventHandler, PipelineExportedState } from "./types.js";
 export type { PipelineStepEvent, PipelineStepEventHandler };
 /**
  * Оркестратор pipeline. Управляет последовательным и параллельным выполнением шагов,
@@ -44,7 +44,7 @@ export declare class PipelineOrchestrator<TKeys extends string = string> {
     private _pluginCleanups;
     constructor(params: {
         config: PipelineConfig;
-        httpConfig?: import("./types").HttpConfig;
+        httpConfig?: import("./types.js").HttpConfig;
         sharedData?: Record<string, unknown>;
         /**
          * @deprecated Используйте params.config.options.autoReset.
@@ -69,7 +69,7 @@ export declare class PipelineOrchestrator<TKeys extends string = string> {
     onStepStart(handler: PipelineStepEventHandler): () => void;
     onStepFinish(handler: PipelineStepEventHandler): () => void;
     onStepError(handler: PipelineStepEventHandler): () => void;
-    subscribeProgress(listener: (progress: import("./types").PipelineProgress) => void): () => void;
+    subscribeProgress(listener: (progress: import("./types.js").PipelineProgress) => void): () => void;
     subscribeStepProgress(stepKey: TKeys | (string & {}), listener: (status: PipelineStepStatus) => void): () => void;
     getProgress(): {
         currentStage: number;

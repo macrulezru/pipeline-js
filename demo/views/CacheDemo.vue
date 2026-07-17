@@ -406,8 +406,8 @@ const rateLog  = computed(() => reqLog.value.filter((r) => r.group === "rate").s
   <span class="prop">cacheKey</span>:   <span class="str">"my-data"</span>,
 });
 
-<span class="cmt">// Сбросить кэш:</span>
-client.<span class="fn">clearCache</span>();</pre>
+<span class="cmt">// Сбросить кэш (async):</span>
+<span class="kw">await</span> client.<span class="fn">clearCache</span>();</pre>
           </div>
         </Transition>
       </div>

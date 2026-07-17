@@ -1,6 +1,6 @@
 import { computed } from "vue";
-import { getRestClient } from "./rest-client";
-import type { HttpConfig } from "./types";
+import { getRestClient } from "./rest-client.js";
+import type { HttpConfig } from "./types.js";
 
 /**
  * Vue composition function for memoized REST client

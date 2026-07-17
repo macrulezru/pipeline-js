@@ -1,5 +1,5 @@
 import { computed } from "vue";
-import { getRestClient } from "./rest-client";
+import { getRestClient } from "./rest-client.js";
 /**
  * Vue composition function for memoized REST client
  * @param config HttpConfig

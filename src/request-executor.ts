@@ -1,6 +1,6 @@
-import { getRestClient } from './rest-client';
+import { getRestClient } from './rest-client.js';
 
-import type { RestRequestConfig, HttpConfig, ApiResponse, RetryConfig } from './types';
+import type { RestRequestConfig, HttpConfig, ApiResponse, RetryConfig } from './types.js';
 
 /** Небольшой хелпер: sleep с поддержкой AbortSignal */
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
@@ -35,6 +35,14 @@ function mergeSignals(
     b.addEventListener('abort', abort, { once: true });
   }
   return controller.signal;
+}
+
+const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+function generateIdempotencyKey(): string {
+  const g: any = globalThis as any;
+  if (g.crypto?.randomUUID) return g.crypto.randomUUID();
+  return `idem-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 /**
@@ -90,6 +98,16 @@ export class RequestExecutor {
     const retriableStatus = this.retryCfg.retriableStatus;
     const maxRetryAfterMs = this.retryCfg.maxRetryAfterMs ?? 60_000;
 
+    // --- autoIdempotencyKey: сгенерировать ОДИН РАЗ до начала retry-цикла,
+    // чтобы все попытки одного логического запроса несли один и тот же ключ ---
+    let effectiveReqConfig = reqConfig;
+    if (this.httpConfig.autoIdempotencyKey && !reqConfig?.idempotencyKey) {
+      const method = (reqConfig?.method ?? 'GET').toString().toUpperCase();
+      if (MUTATING_METHODS.has(method)) {
+        effectiveReqConfig = { ...reqConfig, idempotencyKey: generateIdempotencyKey() };
+      }
+    }
+
     let attempt = 0;
     let lastError: unknown;
 
@@ -109,7 +127,7 @@ export class RequestExecutor {
 
       try {
         const result = await this.client.request<T>(command, {
-          ...reqConfig,
+          ...effectiveReqConfig,
           signal,
         });
         return result;

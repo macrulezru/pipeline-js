@@ -1,11 +1,11 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PipelineOrchestrator = void 0;
-const error_handler_1 = require("./error-handler");
-const progress_tracker_1 = require("./progress-tracker");
-const request_executor_1 = require("./request-executor");
-const rest_client_1 = require("./rest-client");
-const types_1 = require("./types");
+const error_handler_js_1 = require("./error-handler.js");
+const progress_tracker_js_1 = require("./progress-tracker.js");
+const request_executor_js_1 = require("./request-executor.js");
+const rest_client_js_1 = require("./rest-client.js");
+const types_js_1 = require("./types.js");
 /** Проверка: является ли элемент группой параллельных шагов */
 function isParallelGroup(item) {
     return typeof item === "object" && item !== null && "parallel" in item;
@@ -62,9 +62,9 @@ class PipelineOrchestrator {
         this._pluginCleanups = [];
         this.config = params.config;
         // Считаем общее кол-во шагов (параллельная группа = 1 элемент прогресса)
-        this.progress = new progress_tracker_1.ProgressTracker(params.config.stages.length);
-        this.errorHandler = new error_handler_1.ErrorHandler();
-        this.executor = new request_executor_1.RequestExecutor((_a = params.httpConfig) !== null && _a !== void 0 ? _a : {});
+        this.progress = new progress_tracker_js_1.ProgressTracker(params.config.stages.length);
+        this.errorHandler = new error_handler_js_1.ErrorHandler();
+        this.executor = new request_executor_js_1.RequestExecutor((_a = params.httpConfig) !== null && _a !== void 0 ? _a : {});
         this.sharedData = (_b = params.sharedData) !== null && _b !== void 0 ? _b : {};
         // autoReset: сначала из config.options, потом из params.options (обратная совместимость)
         this.autoReset =
@@ -273,7 +273,12 @@ class PipelineOrchestrator {
         }
     }
     addLog(type, message, data) {
+        var _a;
         this.logs.push({ type, message, data, timestamp: new Date(), runId: this._runId });
+        const maxLogs = (_a = this.config.options) === null || _a === void 0 ? void 0 : _a.maxLogs;
+        if (maxLogs !== undefined && this.logs.length > maxLogs) {
+            this.logs.splice(0, this.logs.length - maxLogs);
+        }
     }
     async emitStepStart(event) {
         const e = { ...event, runId: this._runId };
@@ -450,11 +455,11 @@ class PipelineOrchestrator {
                     sharedData: this.sharedData,
                     signal,
                 });
-                if ((0, types_1.isStepRecovery)(handled)) {
+                if ((0, types_js_1.isStepRecovery)(handled)) {
                     // errorHandler восстановил шаг — продолжаем как после успеха
                     return await this._commitStepSuccess(stepIndex, stage, handled.data, stepStartTs);
                 }
-                return await this._commitStepError(stepIndex, stage, (0, rest_client_1.toApiError)(handled !== null && handled !== void 0 ? handled : err), stepStartTs);
+                return await this._commitStepError(stepIndex, stage, (0, rest_client_js_1.toApiError)(handled !== null && handled !== void 0 ? handled : err), stepStartTs);
             }
             return await this._commitStepError(stepIndex, stage, this.errorHandler.handle(err, stage.key), stepStartTs);
         }
@@ -779,7 +784,7 @@ class PipelineOrchestrator {
             // Защита от бесконечных циклов при DAG-переходах
             stepCount++;
             if (stepCount > maxSteps) {
-                const loopError = (0, rest_client_1.toApiError)(new Error(`Pipeline exceeded maxSteps (${maxSteps}). Possible infinite loop in 'next' transitions.`));
+                const loopError = (0, rest_client_js_1.toApiError)(new Error(`Pipeline exceeded maxSteps (${maxSteps}). Possible infinite loop in 'next' transitions.`));
                 this.addLog("error", "pipeline:maxSteps:exceeded", { maxSteps });
                 await this.emit("log", { type: "pipeline:error", error: loopError });
                 return { stageResults: { ...this.stageResults }, success: false };
@@ -823,7 +828,7 @@ class PipelineOrchestrator {
                 }
                 catch (err) {
                     // Ошибка из sub-pipeline (проброшена из executeSubPipeline)
-                    const apiError = (0, rest_client_1.toApiError)(err);
+                    const apiError = (0, rest_client_js_1.toApiError)(err);
                     // Логируем ошибку
                     this.addLog("error", `subPipeline:${subItem.key}:unhandled_error`, {
                         stepIndex: i,
@@ -1069,7 +1074,7 @@ class PipelineOrchestrator {
         return controller.signal;
     }
     markRemainingAborted(fromIndex, _signal) {
-        const apiError = (0, rest_client_1.toApiError)({
+        const apiError = (0, rest_client_js_1.toApiError)({
             message: "Pipeline aborted",
             code: "ABORTED",
         });

@@ -1,0 +1,19 @@
+[
+  {
+    "name": "core (rest-pipeline-js)",
+    "path": "dist/esm/index.js",
+    "limit": "25 KB"
+  },
+  {
+    "name": "rest-pipeline-js/vue",
+    "path": "dist/esm/vue.js",
+    "ignore": ["vue"],
+    "limit": "25 KB"
+  },
+  {
+    "name": "rest-pipeline-js/react",
+    "path": "dist/esm/react.js",
+    "ignore": ["react", "react-dom"],
+    "limit": "25 KB"
+  }
+]

@@ -1,8 +1,8 @@
-import { ErrorHandler } from "./error-handler";
-import { ProgressTracker } from "./progress-tracker";
-import { RequestExecutor } from "./request-executor";
-import { toApiError } from "./rest-client";
-import { isStepRecovery } from "./types";
+import { ErrorHandler } from "./error-handler.js";
+import { ProgressTracker } from "./progress-tracker.js";
+import { RequestExecutor } from "./request-executor.js";
+import { toApiError } from "./rest-client.js";
+import { isStepRecovery } from "./types.js";
 
 import type {
   PipelineConfig,
@@ -16,7 +16,7 @@ import type {
   ParallelStageGroup,
   SubPipelineStage,
   StreamStageConfig,
-} from "./types";
+} from "./types.js";
 
 // Re-export так как types.ts теперь является единственным источником истины
 export type { PipelineStepEvent, PipelineStepEventHandler };
@@ -108,7 +108,7 @@ export class PipelineOrchestrator<TKeys extends string = string> {
 
   constructor(params: {
     config: PipelineConfig;
-    httpConfig?: import("./types").HttpConfig;
+    httpConfig?: import("./types.js").HttpConfig;
     sharedData?: Record<string, unknown>;
     /**
      * @deprecated Используйте params.config.options.autoReset.
@@ -235,7 +235,7 @@ export class PipelineOrchestrator<TKeys extends string = string> {
   }
 
   subscribeProgress(
-    listener: (progress: import("./types").PipelineProgress) => void,
+    listener: (progress: import("./types.js").PipelineProgress) => void,
   ) {
     return this.progress.subscribe(listener);
   }
@@ -371,6 +371,10 @@ export class PipelineOrchestrator<TKeys extends string = string> {
 
   private addLog(type: string, message: string, data?: any) {
     this.logs.push({ type, message, data, timestamp: new Date(), runId: this._runId });
+    const maxLogs = this.config.options?.maxLogs;
+    if (maxLogs !== undefined && this.logs.length > maxLogs) {
+      this.logs.splice(0, this.logs.length - maxLogs);
+    }
   }
 
   private async emitStepStart(event: PipelineStepEvent) {
@@ -670,7 +674,7 @@ export class PipelineOrchestrator<TKeys extends string = string> {
   private async _commitStepError(
     stepIndex: number,
     stage: PipelineStageConfig,
-    apiError: import("./types").ApiError,
+    apiError: import("./types.js").ApiError,
     stepStartTs: number,
   ): Promise<PipelineStepResult> {
     const key = stage.key;

@@ -310,6 +310,31 @@ describe("Bug #11 fix — autoReset очищает логи", () => {
     await o.run();
     expect(o.getLogs().length).toBeGreaterThan(countAfterFirst);
   });
+
+  it("options.maxLogs ограничивает размер лога (FIFO)", async () => {
+    const config: PipelineConfig = {
+      stages: [{ key: "step1", request: async () => 1 }],
+      options: { maxLogs: 3 },
+    };
+    const o = new PipelineOrchestrator({ config, httpConfig });
+    await o.run();
+    await o.run();
+    await o.run();
+    const logs = o.getLogs();
+    expect(logs.length).toBe(3);
+    // Хранятся самые свежие записи — последняя должна быть про последний run
+    expect(logs[logs.length - 1].message).toContain("step1");
+  });
+
+  it("без maxLogs лог не ограничен (обратная совместимость)", async () => {
+    const config: PipelineConfig = {
+      stages: [{ key: "step1", request: async () => 1 }],
+    };
+    const o = new PipelineOrchestrator({ config, httpConfig });
+    for (let i = 0; i < 5; i++) await o.run();
+    // 5 запусков × 2 записи ("start" + "success") = 10, ничего не отброшено
+    expect(o.getLogs().length).toBe(10);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

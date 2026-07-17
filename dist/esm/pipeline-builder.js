@@ -1,4 +1,4 @@
-import { PipelineOrchestrator } from "./pipeline-orchestrator";
+import { PipelineOrchestrator } from "./pipeline-orchestrator.js";
 /**
  * Сокращённая фабричная функция для создания PipelineOrchestrator.
  * Избавляет от необходимости писать вложенный объект `{ config: { stages: [...] } }`.

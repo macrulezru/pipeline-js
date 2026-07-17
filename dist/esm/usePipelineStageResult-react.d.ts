@@ -1,5 +1,5 @@
-import type { PipelineOrchestrator } from "./pipeline-orchestrator";
-import type { PipelineStepResult } from "./types";
+import type { PipelineOrchestrator } from "./pipeline-orchestrator.js";
+import type { PipelineStepResult } from "./types.js";
 /**
  * React hook для подписки на результат конкретного шага pipeline.
  * Реактивно обновляется при каждом изменении stageResults.

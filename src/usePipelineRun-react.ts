@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import type { PipelineOrchestrator } from "./pipeline-orchestrator";
-import type { PipelineResult, PipelineStepResult } from "./types";
+import type { PipelineOrchestrator } from "./pipeline-orchestrator.js";
+import type { PipelineResult, PipelineStepResult } from "./types.js";
 
 /**
  * React hook to run pipeline and track status/result.
- * @returns [run, { running, result, error, stageResults, abort, rerunStep }]
+ * @returns [run, { running, result, error, stageResults, abort, pause, resume, rerunStep, clearStageResults }]
  */
 export function usePipelineRunReact(orchestrator: PipelineOrchestrator) {
   const [running, setRunning] = useState(false);
@@ -48,5 +48,10 @@ export function usePipelineRunReact(orchestrator: PipelineOrchestrator) {
     [orchestrator],
   );
 
-  return [run, { running, result, error, stageResults, abort, pause, resume, rerunStep }] as const;
+  const clearStageResults = useCallback(() => orchestrator.clearStageResults(), [orchestrator]);
+
+  return [
+    run,
+    { running, result, error, stageResults, abort, pause, resume, rerunStep, clearStageResults },
+  ] as const;
 }

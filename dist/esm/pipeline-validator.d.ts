@@ -1,4 +1,4 @@
-import type { PipelineConfig } from "./types";
+import type { PipelineConfig } from "./types.js";
 export interface PipelineValidationResult {
     valid: boolean;
     errors: string[];

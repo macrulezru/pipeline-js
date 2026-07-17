@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { PipelineOrchestrator } from "./pipeline-orchestrator";
+import type { PipelineOrchestrator } from "./pipeline-orchestrator.js";
 
 /**
  * React hook for subscribing to step events (success/error/progress) for a specific step

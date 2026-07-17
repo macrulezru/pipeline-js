@@ -1,6 +1,6 @@
 {
   "name": "rest-pipeline-js",
-  "version": "1.4.1",
+  "version": "2.0.0",
   "description": "Orchestrate REST API calls in sequential and parallel pipelines with retry, caching, rate limiting and SSE streaming. Vanilla JS / Vue 3 / React.",
   "author": "macrulez <macrulezru@gmail.com> (https://macrulez.ru/en)",
   "license": "MIT",
@@ -43,8 +43,13 @@
   },
   "scripts": {
     "prepublishOnly": "npm run build",
-    "build": "tsc -p tsconfig.esm.json && tsc -p tsconfig.cjs.json",
+    "build": "tsc -p tsconfig.esm.json && tsc -p tsconfig.cjs.json && node scripts/postbuild.mjs",
+    "verify:esm": "node --input-type=module -e \"import('./dist/esm/index.js').then(()=>console.log('ESM entry OK')).then(()=>import('./dist/esm/vue.js')).then(()=>console.log('ESM /vue entry OK')).then(()=>import('./dist/esm/react.js')).then(()=>console.log('ESM /react entry OK'))\"",
     "test": "vitest run",
+    "test:types": "vitest --typecheck --run",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint .",
+    "size": "npm run build && size-limit",
     "demo:vue": "npm run start-demo-vite",
     "start-demo-vite": "vite --config vite.config.js"
   },
@@ -82,11 +87,13 @@
     "axios": "^1.13.2"
   },
   "devDependencies": {
+    "@size-limit/preset-small-lib": "^12.1.0",
     "@testing-library/react": "^16.3.1",
     "@types/react": "^19.2.8",
     "@typescript-eslint/eslint-plugin": "^8.53.0",
     "@typescript-eslint/parser": "^8.53.0",
     "@vitejs/plugin-vue": "^6.0.3",
+    "@vitest/coverage-v8": "^4.1.10",
     "eslint": "^9.39.2",
     "eslint-plugin-vue": "^10.6.2",
     "jsdom": "^27.4.0",
@@ -94,6 +101,7 @@
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "scheduler": "^0.27.0",
+    "size-limit": "^12.1.0",
     "typescript": "^5.9.3",
     "vite": "^7.3.1",
     "vitest": "^4.0.17",

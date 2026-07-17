@@ -1,8 +1,8 @@
-import { ErrorHandler } from "./error-handler";
-import { ProgressTracker } from "./progress-tracker";
-import { RequestExecutor } from "./request-executor";
-import { toApiError } from "./rest-client";
-import { isStepRecovery } from "./types";
+import { ErrorHandler } from "./error-handler.js";
+import { ProgressTracker } from "./progress-tracker.js";
+import { RequestExecutor } from "./request-executor.js";
+import { toApiError } from "./rest-client.js";
+import { isStepRecovery } from "./types.js";
 /** Проверка: является ли элемент группой параллельных шагов */
 function isParallelGroup(item) {
     return typeof item === "object" && item !== null && "parallel" in item;
@@ -270,7 +270,12 @@ export class PipelineOrchestrator {
         }
     }
     addLog(type, message, data) {
+        var _a;
         this.logs.push({ type, message, data, timestamp: new Date(), runId: this._runId });
+        const maxLogs = (_a = this.config.options) === null || _a === void 0 ? void 0 : _a.maxLogs;
+        if (maxLogs !== undefined && this.logs.length > maxLogs) {
+            this.logs.splice(0, this.logs.length - maxLogs);
+        }
     }
     async emitStepStart(event) {
         const e = { ...event, runId: this._runId };

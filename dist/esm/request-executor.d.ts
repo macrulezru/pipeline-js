@@ -1,4 +1,4 @@
-import type { RestRequestConfig, HttpConfig, ApiResponse } from './types';
+import type { RestRequestConfig, HttpConfig, ApiResponse } from './types.js';
 export declare class RequestExecutor {
     private httpConfig;
     private client;

@@ -1,4 +1,4 @@
-import { PipelineOrchestrator } from "./pipeline-orchestrator";
+import { PipelineOrchestrator } from "./pipeline-orchestrator.js";
 import type {
   PipelineItem,
   PipelineStageConfig,
@@ -9,7 +9,7 @@ import type {
   PipelineMiddleware,
   PipelineOptions,
   HttpConfig,
-} from "./types";
+} from "./types.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 4.1 createPipeline() — фабричная функция

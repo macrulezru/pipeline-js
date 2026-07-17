@@ -51,6 +51,44 @@ export interface RetryConfig {
 
 export type RetryOptions = Partial<RetryConfig>;
 
+/**
+ * Абстрактный backend для кэша ответов. Позволяет заменить встроенный in-memory
+ * `TtlCache` на внешнее хранилище (Redis и т.п.) — полезно для серверных
+ * многоинстансных развёртываний, где in-memory кэш не разделяется между процессами.
+ * Методы могут быть синхронными или асинхронными (возвращать Promise) — клиент
+ * всегда обращается к ним через `await`.
+ *
+ * `getStale`/`deleteWhere`/`keys` опциональны: без них недоступны соответственно
+ * стратегия `stale-while-revalidate` и `invalidateCache()` (в этом случае
+ * `invalidateCache()` вернёт 0 и ничего не удалит — см. её JSDoc).
+ *
+ * @example
+ * const redisStore: CacheStore = {
+ *   async get(key) { const v = await redis.get(key); return v ? JSON.parse(v) : undefined; },
+ *   async set(key, value, ttlMs) { await redis.set(key, JSON.stringify(value), "PX", ttlMs); },
+ *   async delete(key) { await redis.del(key); },
+ *   async clear() { await redis.flushdb(); },
+ * };
+ */
+export interface CacheStore<V = ApiResponse<any>> {
+  get(key: string): V | undefined | Promise<V | undefined>;
+  set(key: string, value: V, ttlMs: number): void | Promise<void>;
+  delete(key: string): void | Promise<void>;
+  clear(): void | Promise<void>;
+  /** Требуется только для стратегии 'stale-while-revalidate'. */
+  getStale?(
+    key: string,
+    staleMs: number,
+  ):
+    | { value: V; isStale: boolean }
+    | undefined
+    | Promise<{ value: V; isStale: boolean } | undefined>;
+  /** Требуется только для точечной инвалидации через invalidateCache(). */
+  deleteWhere?(
+    predicate: (key: string) => boolean,
+  ): number | Promise<number>;
+}
+
 export interface CacheConfig {
   enabled: boolean;
   ttlMs: number;
@@ -66,12 +104,144 @@ export interface CacheConfig {
    * По умолчанию: 0 (устаревший ответ отдаётся бесконечно долго, пока не истёк staleMs).
    */
   staleMs?: number;
+  /**
+   * Кастомный backend кэша (например, Redis) вместо встроенного in-memory TtlCache.
+   * По умолчанию: не задан — используется TtlCache в пределах процесса/клиента.
+   */
+  store?: CacheStore<ApiResponse<any>>;
+}
+
+/**
+ * Абстрактный backend для распределённого rate limiting (например, Redis) —
+ * несколько серверных инстансов делят один лимит вместо того, чтобы каждый
+ * процесс считал запросы независимо (что на N инстансов фактически даёт лимит
+ * ×N). Аналог `CacheStore`, но для двух примитивов rate limiter'а.
+ *
+ * Без `store` (по умолчанию) `RateLimiter` использует точный in-memory алгоритм
+ * в пределах одного процесса — поведение не меняется.
+ *
+ * @example
+ * const redisStore: RateLimiterStore = {
+ *   async incrementWindow(key, intervalMs) {
+ *     const n = await redis.incr(key);
+ *     if (n === 1) await redis.pexpire(key, intervalMs);
+ *     return n;
+ *   },
+ *   async acquireConcurrencySlot(key, max, leaseMs) {
+ *     // см. examples/redis-rate-limiter-store.ts для полной реализации через Lua-скрипт
+ *   },
+ * };
+ */
+export interface RateLimiterStore {
+  /**
+   * Атомарно увеличивает счётчик запросов для `key` в пределах скользящего
+   * (fixed-window) окна `intervalMs` — создавая ключ с этим TTL при первом
+   * инкременте — и возвращает значение счётчика *после* инкремента.
+   * Соответствует `INCR key; PEXPIRE key intervalMs NX` в Redis.
+   *
+   * Как и любой fixed-window счётчик, допускает всплеск примерно в 2×lim
+   * на границе окна (в отличие от sliding-log реализации) — это принятый
+   * компромисс ради простоты интерфейса.
+   */
+  incrementWindow(key: string, intervalMs: number): Promise<number>;
+  /**
+   * Занимает один из `maxConcurrent` слотов для `key`, ожидая, пока слот
+   * освободится, и возвращает функцию освобождения. `leaseMs` ограничивает,
+   * как долго слот удерживается, если процесс, занявший его, аварийно
+   * завершится, не вызвав release — реализация должна сама снимать такую
+   * "протухшую" аренду по истечении `leaseMs`.
+   *
+   * В отличие от `incrementWindow`, точный распределённый семафор без
+   * центрального сервиса блокировок невозможен — считайте это приближённым
+   * ограничением, а не строгой гарантией (как и большинство распределённых
+   * семафоров на практике).
+   */
+  acquireConcurrencySlot(
+    key: string,
+    maxConcurrent: number,
+    leaseMs: number,
+  ): Promise<() => void | Promise<void>>;
 }
 
 export interface RateLimitConfig {
   maxConcurrent?: number;
   maxRequestsPerInterval?: number;
   intervalMs?: number;
+  /**
+   * Кастомный backend для распределённого rate limiting между несколькими
+   * серверными инстансами (например, Redis) вместо встроенного in-memory
+   * лимитера, который видит только запросы своего процесса.
+   * По умолчанию: не задан — используется точный in-memory лимитер.
+   */
+  store?: RateLimiterStore;
+  /**
+   * Ключ "бакета" лимита при использовании общего `store` — позволяет
+   * нескольким независимым лимитерам делить одно Redis-подключение без
+   * коллизий ключей. По умолчанию: случайный id, сгенерированный на инстанс
+   * `RateLimiter` (то есть без явного `key` шеринг между инстансами не работает).
+   */
+  key?: string;
+  /**
+   * Длительность аренды (мс) для `store.acquireConcurrencySlot()` — время,
+   * через которое занятый слот принудительно освобождается, если не был
+   * освобождён явно (например, из-за краша процесса). Учитывается только
+   * если заданы одновременно `store` и `maxConcurrent`.
+   * По умолчанию: 30000 (30с).
+   */
+  leaseMs?: number;
+}
+
+/** Состояние circuit breaker: closed → open → half-open → closed. */
+export type CircuitBreakerState = "closed" | "open" | "half-open";
+
+/** Общее (например, хранимое в Redis) состояние circuit breaker для распределённого сценария. */
+export type CircuitBreakerSharedState = {
+  state: CircuitBreakerState;
+  failureCount: number;
+  successCount: number;
+  /** Timestamp (Date.now()) момента перехода в open. */
+  openedAt: number;
+};
+
+/**
+ * Абстрактный backend для распределённого circuit breaker — несколько
+ * серверных инстансов делят одно состояние (closed/open/half-open) вместо
+ * того, чтобы каждый процесс открывал/закрывал circuit независимо, что
+ * ослабляет защиту (для открытия нужно набрать `failureThreshold` ошибок
+ * *на каждом* инстансе, а не суммарно на backend).
+ *
+ * Без `store` (по умолчанию) `CircuitBreaker` использует in-memory состояние
+ * в пределах одного процесса — поведение не меняется.
+ *
+ * @example
+ * const redisStore: CircuitBreakerStore = {
+ *   async get(key) {
+ *     const raw = await redis.get(key);
+ *     return raw ? JSON.parse(raw) : null;
+ *   },
+ *   async set(key, state, ttlMs) {
+ *     await redis.set(key, JSON.stringify(state), "PX", ttlMs);
+ *   },
+ * };
+ */
+export interface CircuitBreakerStore {
+  /** Возвращает общее состояние, или null, если оно ещё не было записано. */
+  get(key: string): Promise<CircuitBreakerSharedState | null>;
+  /** Полностью перезаписывает общее состояние. `ttlMs` — на случай желания backend'ом самому истечь запись (не обязателен к использованию). */
+  set(key: string, state: CircuitBreakerSharedState, ttlMs: number): Promise<void>;
+  /**
+   * Опционально: атомарно увеличивает `field` на 1 и возвращает новое значение —
+   * убирает гонки при параллельных запросах с разных инстансов (в отличие от
+   * `get` + вычислить + `set`). Без неё `CircuitBreaker` использует
+   * get+compute+set, что при высокой параллельности может недосчитать часть
+   * инкрементов, но остаётся функционально работоспособным (fail-safe
+   * механизм, а не точный счётчик).
+   */
+  incrementCounter?(
+    key: string,
+    field: "failureCount" | "successCount",
+    ttlMs: number,
+  ): Promise<number>;
 }
 
 export interface CircuitBreakerConfig {
@@ -79,6 +249,20 @@ export interface CircuitBreakerConfig {
   failureThreshold: number;
   /** Сколько мс circuit остаётся открытым (запросы отклоняются без обращения к сети), прежде чем перейти в half-open. */
   openMs: number;
+  /**
+   * Кастомный backend для распределённого circuit breaker между несколькими
+   * серверными инстансами (например, Redis) вместо встроенного in-memory
+   * состояния, которое видит только запросы своего процесса.
+   * По умолчанию: не задан — используется in-memory состояние.
+   */
+  store?: CircuitBreakerStore;
+  /**
+   * Ключ "бакета" состояния при использовании общего `store` — позволяет
+   * нескольким независимым breaker'ам делить одно Redis-подключение без
+   * коллизий ключей. По умолчанию: случайный id, сгенерированный на инстанс
+   * `CircuitBreaker` (то есть без явного `key` шеринг между инстансами не работает).
+   */
+  key?: string;
   /**
    * Количество успешных запросов в состоянии half-open, необходимое для закрытия circuit.
    * Любая неудача в half-open сразу возвращает circuit в open.
@@ -115,6 +299,52 @@ export interface MetricsHandler {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Tracing
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Минимальный интерфейс "спана", намеренно совместимый по форме с
+ * OpenTelemetry `Span` (duck-typing — пакет не тянет `@opentelemetry/api` как
+ * зависимость). Реализацию на реальном OTel SDK см. в
+ * `examples/opentelemetry-tracing.ts`.
+ */
+export interface TracingSpan {
+  end(): void;
+  setStatus?(status: { code: "ok" | "error"; message?: string }): void;
+  recordException?(error: unknown): void;
+}
+
+/**
+ * Хук для интеграции с системой трассировки (OpenTelemetry, Sentry, Datadog
+ * APM и т.п.). `startSpan()` вызывается перед каждым HTTP-запросом,
+ * `span.end()` — после его завершения (успешного или нет); `setStatus`/
+ * `recordException` вызываются при ошибке, если реализованы.
+ *
+ * Не путать с `HttpConfig.tracing.generateTraceparent` — тот лишь добавляет
+ * заголовок `traceparent`, этот хук создаёт реальные спаны в вашей системе
+ * трассировки.
+ */
+export interface TracingProvider {
+  startSpan(
+    name: string,
+    attributes?: Record<string, string | number | boolean>,
+  ): TracingSpan;
+}
+
+/** Настройки трассировки запросов (см. HttpConfig.tracing). */
+export interface TracingConfig {
+  /**
+   * Автоматически генерировать и добавлять заголовок `traceparent`
+   * (W3C Trace Context, https://www.w3.org/TR/trace-context/) к каждому
+   * запросу, если он ещё не задан явно в headers запроса.
+   * По умолчанию: false.
+   */
+  generateTraceparent?: boolean;
+  /** Хук для создания спанов в вашей системе трассировки — см. TracingProvider. */
+  provider?: TracingProvider;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Interceptors
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -124,6 +354,23 @@ export type RestRequestConfig = import("axios").AxiosRequestConfig & {
   cacheKey?: string;
   skipRateLimit?: boolean;
   requestId?: string;
+  /**
+   * Значение заголовка идемпотентности (см. HttpConfig.idempotencyHeaderName,
+   * по умолчанию "Idempotency-Key") — сигнализирует backend'у, что повторные
+   * запросы с этим же значением следует считать одной логической операцией
+   * (полезно для мутирующих запросов при retry или сетевой неоднозначности).
+   * Библиотека только проставляет заголовок — фактическую дедупликацию должен
+   * реализовать backend.
+   */
+  idempotencyKey?: string;
+  /**
+   * Явный traceId (32 hex-символа, как в W3C traceparent) для корреляции
+   * нескольких запросов в одну трассу — например, `orchestrator.getRunId()`
+   * без дефисов (UUID без дефисов — это ровно 32 hex-символа). Используется
+   * вместе с `HttpConfig.tracing.generateTraceparent`; если не задан —
+   * генерируется случайный traceId на каждый запрос.
+   */
+  traceId?: string;
 };
 
 /**
@@ -160,7 +407,8 @@ export interface HttpConfig {
   auth?: AuthProvider;
   /**
    * Маскировать чувствительные заголовки в метриках (onRequestStart/onRequestEnd).
-   * По умолчанию: false. В production рекомендуется включить.
+   * По умолчанию: true (secure by default) — задайте false, чтобы получать
+   * заголовки в открытом виде (например, для локальной отладки).
    */
   sanitizeHeaders?: boolean;
   /**
@@ -206,6 +454,29 @@ export interface HttpConfig {
    * Не задан по умолчанию — поведение без circuit breaker не меняется.
    */
   circuitBreaker?: CircuitBreakerConfig;
+  /**
+   * Трассировка запросов: W3C `traceparent` заголовок и/или хук для интеграции
+   * с OpenTelemetry/Sentry/Datadog APM и т.п. Не задано по умолчанию —
+   * поведение не меняется.
+   */
+  tracing?: TracingConfig;
+  /**
+   * Имя заголовка идемпотентности, проставляемого при
+   * `RestRequestConfig.idempotencyKey` (или auto-generated — см.
+   * `autoIdempotencyKey`). По умолчанию: "Idempotency-Key".
+   */
+  idempotencyHeaderName?: string;
+  /**
+   * Если true — `RequestExecutor` (тот, что реально выполняет retry, см.
+   * README → RequestExecutor) сам генерирует `idempotencyKey` для мутирующих
+   * методов (POST/PUT/PATCH/DELETE), если он не был явно задан вызывающим
+   * кодом, один раз перед началом retry-цикла — так что все попытки одного
+   * логического запроса используют один и тот же ключ. Не влияет на прямые
+   * вызовы `client.post()`/`client.put()` и т.п. в обход RequestExecutor —
+   * там `idempotencyKey` нужно задавать явно.
+   * По умолчанию: false.
+   */
+  autoIdempotencyKey?: boolean;
 }
 
 export interface ApiError {
@@ -484,6 +755,14 @@ export type PipelineOptions = {
    * Каждый плагин вызывается при создании orchestrator.
    */
   plugins?: PipelinePlugin[];
+  /**
+   * Максимальное количество записей во внутреннем логе (getLogs()/exportState().logs).
+   * При превышении самые старые записи отбрасываются (FIFO).
+   * По умолчанию: не задано — лог не ограничен и хранит все записи за всё время
+   * жизни orchestrator (может расти неограниченно для долгоживущего instance,
+   * переиспользуемого через много run()/rerunStep() без autoReset).
+   */
+  maxLogs?: number;
 };
 
 /**

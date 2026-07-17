@@ -3,7 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.PipelineBuilder = void 0;
 exports.createPipeline = createPipeline;
 exports.pipe = pipe;
-const pipeline_orchestrator_1 = require("./pipeline-orchestrator");
+const pipeline_orchestrator_js_1 = require("./pipeline-orchestrator.js");
 /**
  * Сокращённая фабричная функция для создания PipelineOrchestrator.
  * Избавляет от необходимости писать вложенный объект `{ config: { stages: [...] } }`.
@@ -18,7 +18,7 @@ const pipeline_orchestrator_1 = require("./pipeline-orchestrator");
  * });
  */
 function createPipeline(stages, options = {}) {
-    return new pipeline_orchestrator_1.PipelineOrchestrator({
+    return new pipeline_orchestrator_js_1.PipelineOrchestrator({
         config: {
             stages,
             middleware: options.middleware,

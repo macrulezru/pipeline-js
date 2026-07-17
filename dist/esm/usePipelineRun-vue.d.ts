@@ -1,5 +1,5 @@
-import type { PipelineOrchestrator } from "./pipeline-orchestrator";
-import type { PipelineResult, PipelineStepResult } from "./types";
+import type { PipelineOrchestrator } from "./pipeline-orchestrator.js";
+import type { PipelineResult, PipelineStepResult } from "./types.js";
 /**
  * Vue composition function to run pipeline and track status/result.
  * @returns { run, running, result, error, stageResults, abort, pause, resume, rerunStep, clearStageResults }
@@ -8,10 +8,10 @@ export declare function usePipelineRunVue(orchestrator: PipelineOrchestrator): {
     run: (...args: any[]) => Promise<any>;
     running: import("vue").Ref<boolean, boolean>;
     result: import("vue").Ref<{
-        stageResults: import("./types").PipelineStageResults;
+        stageResults: import("./types.js").PipelineStageResults;
         success: boolean;
     } | null, PipelineResult | {
-        stageResults: import("./types").PipelineStageResults;
+        stageResults: import("./types.js").PipelineStageResults;
         success: boolean;
     } | null>;
     error: import("vue").Ref<any, any>;
