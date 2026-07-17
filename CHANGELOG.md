@@ -46,7 +46,7 @@ regressions in these areas going forward. Four changes are breaking — see belo
 - **`npm run test:coverage`** (`@vitest/coverage-v8`) with enforced thresholds (`vitest.config.ts`), calibrated to current measured coverage (~72% stmts / ~75% branches / ~59% funcs / ~74% lines). Three previously 0%-covered public modules (`pipeline-validator.ts`, `rate-limiter.ts`, and now `circuit-breaker.ts`'s store path) now have dedicated test files.
 - **`npm run test:types`** (`vitest --typecheck`) — type-level tests (`tests/pipe.test-d.ts`) asserting the `pipe()` builder's `TPrev` threading actually behaves as documented (first step `undefined`, each `.step()` threads the prior return type, `.parallel()`/`.subPipeline()`/`.stream()` don't change it).
 - **`npm run size`** (`size-limit`) — enforces a brotli-compressed size ceiling per entry point (core / `/vue` / `/react`), calibrated to current measured size (~23 KB each).
-- **`.github/workflows/ci.yml`** — runs lint, build, the ESM-load regression check, unit tests, type tests, coverage, and bundle-size checks on Node 18/20/22 for every push/PR.
+- **`.github/workflows/ci.yml`** — runs lint, build, the ESM-load regression check, unit tests, type tests, coverage, and bundle-size checks on Node 20/22/24 for every push/PR. (Node 18 was dropped from the matrix: Vite 7/Vitest 4 require Node ^20.19/22.12+ just to load their own config — unrelated to the package's own `engines: ">=18"`, which is unaffected.)
 - **`examples/`** — focused, copy-pasteable snippets: paginated fan-out with `concurrency`, a `fetch`-based `HttpAdapter` for edge runtimes, an SSE `StreamStageConfig` step, and a Redis-backed `CacheStore`.
 
 ### Changed

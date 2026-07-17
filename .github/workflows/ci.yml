@@ -12,7 +12,12 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node: [18, 20, 22]
+        # vite 7 requires Node ^20.19.0 || >=22.12.0 and vitest 4 requires
+        # ^20.0.0 || ^22.0.0 || >=24.0.0 — Node 18 can't even load vitest.config.ts
+        # (it lacks require(esm), which Vite's config bundler relies on), so it's
+        # excluded here even though the published package's own engines range is
+        # wider (see package.json).
+        node: [20, 22, 24]
     steps:
       - uses: actions/checkout@v4
 
