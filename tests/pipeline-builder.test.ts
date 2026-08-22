@@ -1,9 +1,9 @@
-import { pipe, createPipeline, PipelineBuilder } from "../src/pipeline-builder";
+import { pipe, createPipeline, PipelineBuilder } from "../src/pipeline/pipeline-builder";
 
 const httpConfig = { baseURL: "http://localhost" };
 
 describe("pipe() / PipelineBuilder", () => {
-  it("строит и выполняет pipeline через чейнинг .step()", async () => {
+  it("builds and runs a pipeline via .step() chaining", async () => {
     const orchestrator = pipe()
       .step({ key: "a", request: async () => "hello" })
       .step({ key: "b", request: async ({ prev }) => `${prev}-world` })
@@ -15,10 +15,10 @@ describe("pipe() / PipelineBuilder", () => {
     expect(result.stageResults.b.data).toBe("hello-world");
   });
 
-  it("поддерживает нечейн-стиль вызова (без переприсвоения результата .step())", async () => {
-    // Регрессия: step()/parallel()/subPipeline()/stream() мутируют тот же экземпляр
-    // и возвращают типизированную ссылку на него, а не новый объект — старый стиль
-    // использования (без сохранения возвращаемого значения) не должен терять шаги.
+  it("supports non-chained calls (without reassigning the .step() result)", async () => {
+    // Regression: step()/parallel()/subPipeline()/stream() mutate the same instance
+    // and return a typed reference to it rather than a new object — the old usage
+    // style (without keeping the return value) must not lose any steps.
     const builder = pipe();
     builder.step({ key: "a", request: async () => 1 });
     builder.step({ key: "b", request: async ({ prev }: any) => prev + 1 });
@@ -30,7 +30,7 @@ describe("pipe() / PipelineBuilder", () => {
     expect(result.stageResults.b.data).toBe(2);
   });
 
-  it(".parallel() не меняет prev для следующего .step() (соответствует поведению orchestrator)", async () => {
+  it(".parallel() does not change prev for the following .step() (matches orchestrator behavior)", async () => {
     const orchestrator = pipe()
       .step({ key: "a", request: async () => "from-a" })
       .parallel([
@@ -42,20 +42,20 @@ describe("pipe() / PipelineBuilder", () => {
 
     const result = await orchestrator.run();
     expect(result.success).toBe(true);
-    // prev в "b" — это результат "a", а не данные параллельной группы
+    // prev in "b" is the result of "a", not the parallel group's data
     expect(result.stageResults.b.data).toBe("from-a-seen-by-b");
     expect(result.stageResults.p1.data).toBe("p1-result");
     expect(result.stageResults.p2.data).toBe("p2-result");
   });
 
-  it(".parallel() передаёт concurrency в группу", () => {
+  it(".parallel() passes concurrency through to the group", () => {
     const config = pipe()
       .parallel([{ key: "a", request: async () => 1 }], { concurrency: 2 })
       .toConfig();
     expect((config.stages[0] as any).concurrency).toBe(2);
   });
 
-  it(".subPipeline() добавляет вложенный pipeline как шаг", async () => {
+  it(".subPipeline() adds a nested pipeline as a step", async () => {
     const orchestrator = pipe()
       .subPipeline({
         key: "sub",
@@ -70,7 +70,7 @@ describe("pipe() / PipelineBuilder", () => {
     );
   });
 
-  it(".stream() добавляет stream-шаг", async () => {
+  it(".stream() adds a stream step", async () => {
     async function* gen() {
       yield 1;
       yield 2;
@@ -84,7 +84,7 @@ describe("pipe() / PipelineBuilder", () => {
     expect(result.stageResults.s.data).toEqual([1, 2]);
   });
 
-  it("toConfig() возвращает PipelineConfig без создания orchestrator", () => {
+  it("toConfig() returns a PipelineConfig without creating an orchestrator", () => {
     const config = pipe()
       .step({ key: "a", request: async () => 1 })
       .toConfig();
@@ -92,7 +92,7 @@ describe("pipe() / PipelineBuilder", () => {
     expect((config.stages[0] as any).key).toBe("a");
   });
 
-  it("createPipeline() создаёт работающий orchestrator из массива stages", async () => {
+  it("createPipeline() creates a working orchestrator from a stages array", async () => {
     const orchestrator = createPipeline(
       [{ key: "a", request: async () => "ok" }],
       { httpConfig },
@@ -101,7 +101,7 @@ describe("pipe() / PipelineBuilder", () => {
     expect(result.stageResults.a.data).toBe("ok");
   });
 
-  it("PipelineBuilder экспортируется и может использоваться напрямую (new PipelineBuilder())", async () => {
+  it("PipelineBuilder is exported and can be used directly (new PipelineBuilder())", async () => {
     const builder = new PipelineBuilder();
     const orchestrator = builder
       .step({ key: "a", request: async () => 1 })

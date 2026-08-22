@@ -6,6 +6,11 @@
  * `.parallel(stages, { concurrency })` runs `concurrency` workers that pull
  * the next stage off the list as soon as a slot frees up — results still come
  * back in the original stage order, regardless of completion order.
+ *
+ * This fits a fixed, known page count fetched concurrently. If you don't
+ * know the page count upfront (cursor-based APIs, or offset-based ones
+ * without a `total`) or want to process pages sequentially as they arrive,
+ * use `paginate()`/`paginateAll()` instead — see `pagination-stream.ts`.
  */
 import { pipe } from "rest-pipeline-js";
 

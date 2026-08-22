@@ -13,6 +13,8 @@ dist-ssr
 coverage
 *.local
 .vscode
+.claude
+todo.md
 
 # Editor directories and files
 .idea

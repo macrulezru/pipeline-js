@@ -2,18 +2,28 @@
   {
     "name": "core (rest-pipeline-js)",
     "path": "dist/esm/index.js",
-    "limit": "25 KB"
+    "limit": "28 KB"
   },
   {
     "name": "rest-pipeline-js/vue",
-    "path": "dist/esm/vue.js",
+    "path": "dist/esm/plugins/vue/index.js",
     "ignore": ["vue"],
-    "limit": "25 KB"
+    "limit": "28 KB"
   },
   {
     "name": "rest-pipeline-js/react",
-    "path": "dist/esm/react.js",
+    "path": "dist/esm/plugins/react/index.js",
     "ignore": ["react", "react-dom"],
-    "limit": "25 KB"
+    "limit": "28 KB"
+  },
+  {
+    "name": "rest-pipeline-js/testing",
+    "path": "dist/esm/testing.js",
+    "limit": "5 KB"
+  },
+  {
+    "name": "UMD (CDN, axios bundled)",
+    "path": "dist/umd/rest-pipeline.umd.min.js",
+    "limit": "28 KB"
   }
 ]

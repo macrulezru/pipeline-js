@@ -1,0 +1,10 @@
+import { computed } from "vue";
+import { getRestClient } from "../../http/rest-client.js";
+/**
+ * Vue composition function for memoized REST client
+ * @param config HttpConfig
+ * @returns RestClient instance
+ */
+export const useRestClientVue = (config) => {
+    return computed(() => getRestClient(config));
+};

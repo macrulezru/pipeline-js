@@ -1,4 +1,4 @@
-import { ErrorHandler } from "../src/error-handler";
+import { ErrorHandler } from "../src/http/error-handler";
 
 describe("ErrorHandler", () => {
   it("should handle errors and return ApiError", () => {

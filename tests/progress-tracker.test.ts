@@ -1,4 +1,4 @@
-import { ProgressTracker } from "../src/progress-tracker";
+import { ProgressTracker } from "../src/pipeline/progress-tracker";
 
 describe("ProgressTracker", () => {
   it("should track progress and notify subscribers", () => {

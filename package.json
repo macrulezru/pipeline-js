@@ -1,6 +1,6 @@
 {
   "name": "rest-pipeline-js",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Orchestrate REST API calls in sequential and parallel pipelines with retry, caching, rate limiting and SSE streaming. Vanilla JS / Vue 3 / React.",
   "author": "macrulez <macrulezru@gmail.com> (https://macrulez.ru/en)",
   "license": "MIT",
@@ -15,6 +15,8 @@
   "main": "dist/cjs/index.js",
   "module": "dist/esm/index.js",
   "types": "dist/esm/index.d.ts",
+  "unpkg": "dist/umd/rest-pipeline.umd.min.js",
+  "jsdelivr": "dist/umd/rest-pipeline.umd.min.js",
   "exports": {
     ".": {
       "types": "./dist/esm/index.d.ts",
@@ -22,14 +24,19 @@
       "require": "./dist/cjs/index.js"
     },
     "./vue": {
-      "types": "./dist/esm/vue.d.ts",
-      "import": "./dist/esm/vue.js",
-      "require": "./dist/cjs/vue.js"
+      "types": "./dist/esm/plugins/vue/index.d.ts",
+      "import": "./dist/esm/plugins/vue/index.js",
+      "require": "./dist/cjs/plugins/vue/index.js"
     },
     "./react": {
-      "types": "./dist/esm/react.d.ts",
-      "import": "./dist/esm/react.js",
-      "require": "./dist/cjs/react.js"
+      "types": "./dist/esm/plugins/react/index.d.ts",
+      "import": "./dist/esm/plugins/react/index.js",
+      "require": "./dist/cjs/plugins/react/index.js"
+    },
+    "./testing": {
+      "types": "./dist/esm/testing.d.ts",
+      "import": "./dist/esm/testing.js",
+      "require": "./dist/cjs/testing.js"
     }
   },
   "sideEffects": false,
@@ -43,8 +50,8 @@
   },
   "scripts": {
     "prepublishOnly": "npm run build",
-    "build": "tsc -p tsconfig.esm.json && tsc -p tsconfig.cjs.json && node scripts/postbuild.mjs",
-    "verify:esm": "node --input-type=module -e \"import('./dist/esm/index.js').then(()=>console.log('ESM entry OK')).then(()=>import('./dist/esm/vue.js')).then(()=>console.log('ESM /vue entry OK')).then(()=>import('./dist/esm/react.js')).then(()=>console.log('ESM /react entry OK'))\"",
+    "build": "tsc -p tsconfig.esm.json && tsc -p tsconfig.cjs.json && node scripts/postbuild.mjs && node scripts/build-umd.mjs",
+    "verify:esm": "node --input-type=module -e \"import('./dist/esm/index.js').then(()=>console.log('ESM entry OK')).then(()=>import('./dist/esm/plugins/vue/index.js')).then(()=>console.log('ESM /vue entry OK')).then(()=>import('./dist/esm/plugins/react/index.js')).then(()=>console.log('ESM /react entry OK')).then(()=>import('./dist/esm/testing.js')).then(()=>console.log('ESM /testing entry OK'))\"",
     "test": "vitest run",
     "test:types": "vitest --typecheck --run",
     "test:coverage": "vitest run --coverage",
@@ -90,14 +97,15 @@
     "@size-limit/preset-small-lib": "^12.1.0",
     "@testing-library/react": "^16.3.1",
     "@types/react": "^19.2.8",
+    "@types/ws": "^8.18.1",
     "@typescript-eslint/eslint-plugin": "^8.53.0",
     "@typescript-eslint/parser": "^8.53.0",
     "@vitejs/plugin-vue": "^6.0.3",
     "@vitest/coverage-v8": "^4.1.10",
+    "esbuild": "^0.27.2",
     "eslint": "^9.39.2",
     "eslint-plugin-vue": "^10.6.2",
     "jsdom": "^27.4.0",
-    "prismjs": "^1.30.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "scheduler": "^0.27.0",
@@ -106,6 +114,7 @@
     "vite": "^7.3.1",
     "vitest": "^4.0.17",
     "vue": "^3.5.26",
-    "vue-eslint-parser": "^10.2.0"
+    "vue-eslint-parser": "^10.2.0",
+    "ws": "^8.21.3"
   }
 }

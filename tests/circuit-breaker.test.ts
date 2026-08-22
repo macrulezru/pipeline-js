@@ -1,22 +1,22 @@
-import { CircuitBreaker, CircuitOpenError } from "../src/circuit-breaker";
+import { CircuitBreaker, CircuitOpenError } from "../src/http/circuit-breaker";
 import type { CircuitBreakerStore, CircuitBreakerSharedState } from "../src/types";
 
 describe("CircuitOpenError", () => {
-  it("имеет code CIRCUIT_OPEN", () => {
+  it("has code CIRCUIT_OPEN", () => {
     const err = new CircuitOpenError();
     expect(err.code).toBe("CIRCUIT_OPEN");
     expect(err.name).toBe("CircuitOpenError");
   });
 });
 
-describe("CircuitBreaker (in-memory, без store)", () => {
-  it("начинает в состоянии closed и разрешает выполнение", async () => {
+describe("CircuitBreaker (in-memory, without a store)", () => {
+  it("starts in the closed state and allows execution", async () => {
     const cb = new CircuitBreaker({ failureThreshold: 2, openMs: 1000 });
     expect(await cb.getState()).toBe("closed");
     expect(await cb.canExecute()).toBe(true);
   });
 
-  it("открывается после failureThreshold ошибок подряд", async () => {
+  it("opens after failureThreshold consecutive failures", async () => {
     const cb = new CircuitBreaker({ failureThreshold: 2, openMs: 1000 });
     await cb.onFailure({ message: "err" });
     expect(await cb.getState()).toBe("closed");
@@ -25,16 +25,16 @@ describe("CircuitBreaker (in-memory, без store)", () => {
     expect(await cb.canExecute()).toBe(false);
   });
 
-  it("успех сбрасывает счётчик ошибок в closed", async () => {
+  it("a success resets the failure counter to closed", async () => {
     const cb = new CircuitBreaker({ failureThreshold: 2, openMs: 1000 });
     await cb.onFailure({ message: "err" });
     await cb.onSuccess();
     await cb.onFailure({ message: "err" });
-    // Счётчик был сброшен успехом — второй failure не должен открыть circuit
+    // The counter was reset by the success — the second failure must not open the circuit
     expect(await cb.getState()).toBe("closed");
   });
 
-  it("переходит в half-open после openMs", async () => {
+  it("transitions to half-open after openMs", async () => {
     vi.useFakeTimers();
     const cb = new CircuitBreaker({ failureThreshold: 1, openMs: 1000 });
     await cb.onFailure({ message: "err" });
@@ -45,7 +45,7 @@ describe("CircuitBreaker (in-memory, без store)", () => {
     vi.useRealTimers();
   });
 
-  it("successThreshold успехов в half-open закрывает circuit", async () => {
+  it("successThreshold successes in half-open close the circuit", async () => {
     vi.useFakeTimers();
     const cb = new CircuitBreaker({ failureThreshold: 1, openMs: 1000, successThreshold: 2 });
     await cb.onFailure({ message: "err" });
@@ -59,7 +59,7 @@ describe("CircuitBreaker (in-memory, без store)", () => {
     vi.useRealTimers();
   });
 
-  it("неудача в half-open немедленно возвращает в open", async () => {
+  it("a failure in half-open immediately returns to open", async () => {
     vi.useFakeTimers();
     const cb = new CircuitBreaker({ failureThreshold: 1, openMs: 1000 });
     await cb.onFailure({ message: "err" });
@@ -71,7 +71,7 @@ describe("CircuitBreaker (in-memory, без store)", () => {
     vi.useRealTimers();
   });
 
-  it("isFailure исключает указанные ошибки из подсчёта", async () => {
+  it("isFailure excludes the specified errors from the count", async () => {
     const cb = new CircuitBreaker({
       failureThreshold: 1,
       openMs: 1000,
@@ -97,7 +97,7 @@ describe("CircuitBreaker with store (distributed)", () => {
     }
   }
 
-  it("читает/пишет состояние через store вместо in-memory полей", async () => {
+  it("reads/writes state through the store instead of in-memory fields", async () => {
     const store = new FakeCircuitBreakerStore();
     const cb = new CircuitBreaker({ failureThreshold: 2, openMs: 1000, store, key: "svc-a" });
 
@@ -109,20 +109,20 @@ describe("CircuitBreaker with store (distributed)", () => {
     expect(store.states.get("svc-a")?.state).toBe("open");
   });
 
-  it("два CircuitBreaker с одним key делят состояние через store (распределённый сценарий)", async () => {
+  it("two CircuitBreakers with the same key share state through the store (distributed scenario)", async () => {
     const store = new FakeCircuitBreakerStore();
     const cbA = new CircuitBreaker({ failureThreshold: 2, openMs: 1000, store, key: "shared" });
     const cbB = new CircuitBreaker({ failureThreshold: 2, openMs: 1000, store, key: "shared" });
 
     await cbA.onFailure({ message: "err" });
-    // Второй инстанс "видит" сбой первого через общий store
+    // The second instance "sees" the first instance's failure through the shared store
     await cbB.onFailure({ message: "err" });
 
     expect(await cbA.getState()).toBe("open");
     expect(await cbB.getState()).toBe("open");
   });
 
-  it("без явного key каждый инстанс получает собственный ключ (не делят состояние)", async () => {
+  it("without an explicit key, each instance gets its own key (state is not shared)", async () => {
     const store = new FakeCircuitBreakerStore();
     const cbA = new CircuitBreaker({ failureThreshold: 1, openMs: 1000, store });
     const cbB = new CircuitBreaker({ failureThreshold: 1, openMs: 1000, store });
@@ -132,7 +132,7 @@ describe("CircuitBreaker with store (distributed)", () => {
     expect(await cbB.getState()).toBe("closed");
   });
 
-  it("использует store.incrementCounter(), если он реализован, вместо get+set", async () => {
+  it("uses store.incrementCounter() when implemented, instead of get+set", async () => {
     const store = new FakeCircuitBreakerStore();
     let incrementCalls = 0;
     (store as CircuitBreakerStore).incrementCounter = async (key, field) => {
@@ -151,7 +151,7 @@ describe("CircuitBreaker with store (distributed)", () => {
     expect(await cb.getState()).toBe("open");
   });
 
-  it("переход open → half-open по таймауту сохраняется в store", async () => {
+  it("the open → half-open transition on timeout is persisted to the store", async () => {
     vi.useFakeTimers();
     const store = new FakeCircuitBreakerStore();
     const cb = new CircuitBreaker({ failureThreshold: 1, openMs: 1000, store, key: "svc-c" });

@@ -1,27 +1,27 @@
-import { createRestClient, generateTraceparent } from "../src/rest-client";
+import { createRestClient, generateTraceparent } from "../src/http/rest-client";
 import type { TracingProvider, TracingSpan } from "../src/types";
 
 const TRACEPARENT_RE = /^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/;
 
 describe("generateTraceparent()", () => {
-  it("генерирует валидный W3C traceparent (версия 00)", () => {
+  it("generates a valid W3C traceparent (version 00)", () => {
     const tp = generateTraceparent();
     expect(tp).toMatch(TRACEPARENT_RE);
   });
 
-  it("два вызова без traceId дают разные trace-id", () => {
+  it("two calls without a traceId produce different trace-ids", () => {
     const a = generateTraceparent();
     const b = generateTraceparent();
     expect(a.split("-")[1]).not.toBe(b.split("-")[1]);
   });
 
-  it("переиспользует валидный 32-hex traceId как есть", () => {
+  it("reuses a valid 32-hex traceId as-is", () => {
     const traceId = "0af7651916cd43dd8448eb211c80319c";
     const tp = generateTraceparent(traceId);
     expect(tp.split("-")[1]).toBe(traceId);
   });
 
-  it("UUID без дефисов (формат runId) — валидный traceId", () => {
+  it("a UUID without dashes (runId format) is a valid traceId", () => {
     const uuid = "0af76519-16cd-43dd-8448-eb211c80319c";
     const traceId = uuid.replace(/-/g, "");
     expect(traceId).toHaveLength(32);
@@ -29,7 +29,7 @@ describe("generateTraceparent()", () => {
     expect(tp.split("-")[1]).toBe(traceId);
   });
 
-  it("игнорирует невалидный traceId и генерирует случайный", () => {
+  it("ignores an invalid traceId and generates a random one", () => {
     const tp = generateTraceparent("not-valid-hex");
     expect(tp).toMatch(TRACEPARENT_RE);
     expect(tp.split("-")[1]).not.toBe("not-valid-hex");
@@ -37,7 +37,7 @@ describe("generateTraceparent()", () => {
 });
 
 describe("HttpConfig.tracing.generateTraceparent", () => {
-  it("добавляет заголовок traceparent к запросу", async () => {
+  it("adds a traceparent header to the request", async () => {
     let capturedHeaders: Record<string, string> | undefined;
     const client = createRestClient({
       baseURL: "http://localhost",
@@ -54,7 +54,7 @@ describe("HttpConfig.tracing.generateTraceparent", () => {
     expect(capturedHeaders?.traceparent).toMatch(TRACEPARENT_RE);
   });
 
-  it("без tracing.generateTraceparent заголовок не добавляется", async () => {
+  it("does not add the header when tracing.generateTraceparent is not set", async () => {
     let capturedHeaders: Record<string, string> | undefined;
     const client = createRestClient({
       baseURL: "http://localhost",
@@ -70,7 +70,7 @@ describe("HttpConfig.tracing.generateTraceparent", () => {
     expect(capturedHeaders?.traceparent).toBeUndefined();
   });
 
-  it("не перезаписывает явно заданный заголовок traceparent", async () => {
+  it("does not overwrite an explicitly set traceparent header", async () => {
     let capturedHeaders: Record<string, string> | undefined;
     const client = createRestClient({
       baseURL: "http://localhost",
@@ -87,7 +87,7 @@ describe("HttpConfig.tracing.generateTraceparent", () => {
     expect(capturedHeaders?.traceparent).toBe("00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01");
   });
 
-  it("использует req.traceId для корреляции (например, runId пайплайна)", async () => {
+  it("uses req.traceId for correlation (e.g. a pipeline runId)", async () => {
     let capturedHeaders: Record<string, string> | undefined;
     const client = createRestClient({
       baseURL: "http://localhost",
@@ -116,7 +116,7 @@ describe("HttpConfig.tracing.provider", () => {
     recordException(error: unknown) { this.exception = error; }
   }
 
-  it("вызывает startSpan() перед запросом и span.end() после успешного ответа", async () => {
+  it("calls startSpan() before the request and span.end() after a successful response", async () => {
     const spans: FakeSpan[] = [];
     const provider: TracingProvider = {
       startSpan: (name, attributes) => {
@@ -142,7 +142,7 @@ describe("HttpConfig.tracing.provider", () => {
     expect(spans[0].status).toEqual({ code: "ok" });
   });
 
-  it("вызывает setStatus(error)/recordException()/end() при ошибке запроса", async () => {
+  it("calls setStatus(error)/recordException()/end() on a request error", async () => {
     const spans: FakeSpan[] = [];
     const provider: TracingProvider = {
       startSpan: () => {
@@ -169,7 +169,7 @@ describe("HttpConfig.tracing.provider", () => {
     expect(spans[0].exception).toBeInstanceOf(Error);
   });
 
-  it("не падает, если provider не реализует setStatus/recordException (опциональны)", async () => {
+  it("does not fail if the provider does not implement setStatus/recordException (optional)", async () => {
     let ended = false;
     const provider: TracingProvider = {
       startSpan: () => ({ end: () => { ended = true; } }),

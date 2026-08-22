@@ -3,6 +3,7 @@ import {
   PipelineOrchestrator,
   usePipelineProgressVue,
   usePipelineRunVue,
+  usePipelineStageResultVue,
   usePipelineStepEventVue,
   usePipelineLogsVue,
   useRerunPipelineStepVue,
@@ -82,6 +83,23 @@ describe("Vue hooks", () => {
       useRestClientVue({ baseURL: "http://localhost" }),
     );
     expect(client.value).toBeDefined();
+    app.unmount();
+  });
+
+  it("usePipelineStageResultVue returns null before the pipeline runs, then the stage result after it completes", async () => {
+    const localOrchestrator = new PipelineOrchestrator({
+      config: pipelineConfig,
+      httpConfig,
+    });
+    const [stageResult, app] = withSetup(() =>
+      usePipelineStageResultVue(localOrchestrator, "a"),
+    );
+    expect(stageResult.value).toBeNull();
+
+    await localOrchestrator.run();
+
+    expect(stageResult.value?.status).toBe("success");
+    expect(stageResult.value?.data).toBe(1);
     app.unmount();
   });
 

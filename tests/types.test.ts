@@ -13,12 +13,12 @@ import type {
 } from "../src/types";
 
 describe("Types", () => {
-  it("PipelineConfig принимает обычные шаги", () => {
+  it("PipelineConfig accepts regular steps", () => {
     const config: PipelineConfig = { stages: [] };
     expect(config.stages).toBeDefined();
   });
 
-  it("PipelineConfig принимает параллельные группы (Feature #13)", () => {
+  it("PipelineConfig accepts parallel groups (Feature #13)", () => {
     const group: ParallelStageGroup = {
       key: "group",
       parallel: [
@@ -30,14 +30,14 @@ describe("Types", () => {
     expect(config.stages[0]).toHaveProperty("parallel");
   });
 
-  it("PipelineConfig принимает смешанные шаги и группы", () => {
+  it("PipelineConfig accepts a mix of steps and groups", () => {
     const item1: PipelineItem = { key: "s1", request: async () => 1 };
     const item2: PipelineItem = { key: "g1", parallel: [{ key: "p1" }] };
     const config: PipelineConfig = { stages: [item1, item2] };
     expect(config.stages.length).toBe(2);
   });
 
-  it("PipelineConfig принимает middleware (Feature #14)", () => {
+  it("PipelineConfig accepts middleware (Feature #14)", () => {
     const middleware: PipelineMiddleware = {
       beforeEach: () => {},
       afterEach: () => {},
@@ -47,13 +47,13 @@ describe("Types", () => {
     expect(config.middleware).toBeDefined();
   });
 
-  it("ApiError корректно типизируется", () => {
+  it("ApiError is typed correctly", () => {
     const err: ApiError = { message: "fail" };
     expect(err.message).toBe("fail");
   });
 
-  it("PipelineStepEvent теперь экспортируется из types (не из orchestrator)", () => {
-    // Тип импортируется из types.ts без ошибок
+  it("PipelineStepEvent is now exported from types (not from orchestrator)", () => {
+    // The type is imported from types.ts without errors
     const event: PipelineStepEvent = {
       stepIndex: 0,
       stepKey: "test",
@@ -63,7 +63,7 @@ describe("Types", () => {
     expect(event.stepKey).toBe("test");
   });
 
-  it("PipelineExportedState типизируется корректно (Feature #16)", () => {
+  it("PipelineExportedState is typed correctly (Feature #16)", () => {
     const snap: PipelineExportedState = {
       stageResults: {
         step1: { status: "success", data: 42 },
@@ -75,7 +75,7 @@ describe("Types", () => {
     expect(snap.stageResults.step1.data).toBe(42);
   });
 
-  it("PipelineResult типизируется корректно", () => {
+  it("PipelineResult is typed correctly", () => {
     const result: PipelineResult = {
       stageResults: {},
       success: true,
@@ -83,7 +83,7 @@ describe("Types", () => {
     expect(result.success).toBe(true);
   });
 
-  it("HttpConfig принимает cache и rateLimit (не только типы)", () => {
+  it("HttpConfig accepts cache and rateLimit (not just types)", () => {
     const config: HttpConfig = {
       baseURL: "http://localhost",
       cache: { enabled: true, ttlMs: 5000 },
@@ -93,7 +93,7 @@ describe("Types", () => {
     expect(config.rateLimit?.maxConcurrent).toBe(2);
   });
 
-  it("ApiResponse типизируется корректно", () => {
+  it("ApiResponse is typed correctly", () => {
     const resp: ApiResponse<{ id: number }> = {
       data: { id: 1 },
       status: 200,

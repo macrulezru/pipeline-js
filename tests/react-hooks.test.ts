@@ -2,12 +2,13 @@ import {
   PipelineOrchestrator,
   usePipelineProgressReact,
   usePipelineRunReact,
+  usePipelineStageResultReact,
   usePipelineStepEventReact,
   usePipelineLogsReact,
   useRerunPipelineStepReact,
   useRestClientReact,
 } from "rest-pipeline-js/react";
-import { renderHook } from "@testing-library/react";
+import { act, renderHook } from "@testing-library/react";
 
 describe("React hooks", () => {
   const pipelineConfig = {
@@ -57,5 +58,23 @@ describe("React hooks", () => {
       useRestClientReact({ baseURL: "http://localhost" })
     );
     expect(result.current).toBeDefined();
+  });
+
+  it("usePipelineStageResultReact returns null before the pipeline runs, then the stage result after it completes", async () => {
+    const localOrchestrator = new PipelineOrchestrator({
+      config: pipelineConfig,
+      httpConfig,
+    });
+    const { result } = renderHook(() =>
+      usePipelineStageResultReact(localOrchestrator, "a"),
+    );
+    expect(result.current).toBeNull();
+
+    await act(async () => {
+      await localOrchestrator.run();
+    });
+
+    expect(result.current?.status).toBe("success");
+    expect(result.current?.data).toBe(1);
   });
 });

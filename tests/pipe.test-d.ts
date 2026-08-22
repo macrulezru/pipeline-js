@@ -4,8 +4,8 @@
 // *type* error, not a test failure caught by `npm test`. See pipeline-builder.ts
 // for the TPrev phantom-type mechanics being verified.
 import { test, expectTypeOf } from "vitest";
-import { pipe } from "../src/pipeline-builder";
-import { PipelineOrchestrator } from "../src/pipeline-orchestrator";
+import { pipe } from "../src/pipeline/pipeline-builder";
+import { PipelineOrchestrator } from "../src/pipeline/pipeline-orchestrator";
 import type { PipelineConfig } from "../src/types";
 
 test("first .step()'s prev is typed undefined", () => {
@@ -97,6 +97,23 @@ test(".stream() does not change TPrev for the next .step()", () => {
     })
     .step({
       key: "afterStream",
+      request: async ({ prev }) => {
+        expectTypeOf(prev).toEqualTypeOf<number>();
+        return prev;
+      },
+    });
+});
+
+test(".websocket() does not change TPrev for the next .step()", () => {
+  pipe()
+    .step({ key: "first", request: async () => 7 })
+    .websocket({
+      key: "live",
+      url: "wss://example.com/ws",
+      onMessage: (data) => data,
+    })
+    .step({
+      key: "afterWebSocket",
       request: async ({ prev }) => {
         expectTypeOf(prev).toEqualTypeOf<number>();
         return prev;

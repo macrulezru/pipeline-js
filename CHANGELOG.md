@@ -1,5 +1,242 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- **Grouped `src/` into `src/http/` and `src/pipeline/` by domain — no public
+  API or behavior change.** The 11 core files that build `createRestClient()`
+  (`rest-client.ts`, `request-executor.ts`, `cache.ts`, `circuit-breaker.ts`,
+  `rate-limiter.ts`, `offline-queue.ts`, `error-handler.ts`) and
+  `PipelineOrchestrator` (`pipeline-orchestrator.ts`, `pipeline-builder.ts`,
+  `pipeline-validator.ts`, `progress-tracker.ts`, plus the existing
+  `orchestrator/` extraction modules) sat flat in `src/` — moved into
+  `src/http/` and `src/pipeline/` respectively via `git mv` (history
+  preserved). `index.ts`, `types.ts`, `pagination.ts`, `testing.ts`, and
+  `plugins/` stayed at the top level. Also deleted the long-dead, unwired
+  `src/vue-demo/` (a prismjs-based precursor of the live `demo/` app,
+  excluded from every build config already) and its now-orphaned `prismjs`
+  devDependency. Coverage, test count, lint warnings, and every bundle size
+  are byte-for-byte identical to before the move.
+
+## [2.1.0] - 2026-08-22
+
+### Added
+
+- **`HttpConfig.retry.jitterStrategy`** (`"fixed"` (default) | `"full"` |
+  `"decorrelated"`) — controls how randomness is added to the computed
+  backoff delay. `"fixed"` is the previous (and default) behavior: nominal
+  backoff plus up to +10% on top. `"full"` and `"decorrelated"` implement
+  AWS's [Exponential Backoff and Jitter](https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/)
+  algorithms, which spread out retries from many concurrent clients better
+  than a fixed jitter window — useful when many instances of an app may
+  retry against the same backend at once. Doesn't affect `Retry-After`
+  handling, which always takes the server's value as-is. As a minor
+  consistency fix, the previously-unjittered fallback path (backoff used
+  when a `Retry-After` header is present but fails to parse) now also goes
+  through `jitterStrategy`.
+- **`HttpConfig.rateLimit.onRateLimitHeaders`** — callback invoked after
+  every response (success or error) with the raw response headers, so you
+  can throttle proactively from `X-RateLimit-Remaining`/the IETF-draft
+  `RateLimit-*`/vendor-specific headers instead of only reacting after an
+  actual 429. New `RateLimiter.throttleFor(ms)` / `.asControl()` (the object
+  passed to the callback) delay the next `acquire()` call(s) by at least
+  `ms`, composing with `maxConcurrent`/`maxRequestsPerInterval` rather than
+  replacing them; a later, shorter `throttleFor()` call never shortens an
+  already-scheduled longer wait. Applies before delegating to a distributed
+  `rateLimit.store`, if one is configured. The library doesn't parse any
+  particular header scheme itself — see `examples/proactive-rate-limit-throttling.ts`
+  for a few common shapes.
+- **`PipelineStageConfig.validateInput`/`validateOutput`** — validate (and,
+  since the return value replaces the data, optionally coerce) a stage's
+  input and output. `validateInput` runs after the `before` hook, right
+  before `request`; `validateOutput` runs after the `after` hook, right
+  before the step is committed as successful. Both share the `(data, {
+  allResults, sharedData, signal })` signature used by the other stage
+  hooks, and a thrown error goes through the exact same path as any other
+  stage error — `errorHandler` can inspect it and `recoverStep(fallback)` it,
+  same as a failed `request`. Both also apply to stages inside a
+  `ParallelStageGroup`, since they share the same execution path as
+  top-level stages. The library doesn't depend on any schema library — pass
+  any `(data) => T` that throws on invalid data. See
+  `examples/zod-validation.ts` for a `withZodSchema()` adapter.
+- **`paginate()` / `paginateAll()` / `flattenPages()`** — iterate a paginated
+  API as an `AsyncGenerator<T[]>`, hiding the difference between cursor-based
+  (`fetchPage` returns `{ items, nextCursor }`) and offset/limit-based
+  (`{ items, total? }`) APIs. `paginateAll()` collects every page into one
+  flat array; `flattenPages()` turns a stream of pages into a stream of
+  individual items, useful as a `StreamStageConfig.stream` source when
+  `onChunk` should fire per item rather than per page. Both `paginate()` and
+  `fetchPage` accept an optional `signal` for `abort()` support. See
+  `examples/pagination-stream.ts`; `examples/pagination-fanout.ts` remains
+  the better fit when the page count is known upfront and pages should be
+  fetched concurrently rather than sequentially.
+- **`createMockAdapter()`** — new `rest-pipeline-js/testing` entry point (a
+  separate one, like `/vue`/`/react`, so it never ships in a production
+  bundle — 603 B brotli on its own). Produces an `HttpAdapter` backed by
+  route definitions (`{ method?, url: string | RegExp, respond }`) instead
+  of a real network call, for testing code that uses `createRestClient()`/
+  `PipelineOrchestrator`. `respond` can be a static spec, a function of the
+  request, or an array consumed one response per matching call (repeating
+  the last entry once exhausted) — the array form is aimed at exercising
+  retry logic (e.g. two 503s then a 200). A response with `status >= 400`
+  rejects by default, matching axios/fetch's own behavior, with `.status`/
+  `.response.status` set so `retry.retriableStatus`/`circuitBreaker`/error
+  interceptors work against it unmodified; override per-response with an
+  explicit `error: true`/`false`. `adapter.calls` records every request
+  (matched or not) for assertions; a request matching no route throws
+  immediately with a clear message instead of hanging a test. See
+  `examples/mock-adapter.ts`.
+- **`WebSocketStageConfig`** — a pipeline stage running over a persistent
+  WebSocket connection (`onOpen`/`onMessage`/`onClose`/`onError`, `closeOn`),
+  alongside `StreamStageConfig`. `onMessage` can be `async`; non-`undefined`
+  return values are collected into the stage's `data` array and passed to
+  `onChunk` in real time, the same pattern `StreamStageConfig` uses for
+  chunks. Success/error is decided by the close event's `wasClean`, not the
+  error event directly — most WebSocket implementations fire `error`
+  immediately before `close`, so `onError` alone doesn't fail the stage.
+  `createWebSocket` defaults to `globalThis.WebSocket` (browsers, Deno,
+  Node ≥22); pass it explicitly for Node <22 via the `ws` package or any
+  other transport — mirrors `HttpAdapter`'s injection pattern rather than
+  hardcoding a dependency. New `pipe().websocket()` builder method, on par
+  with `.stream()`. See `examples/websocket-stage.ts`.
+- **`HttpConfig.offlineQueue`** — queue mutating requests (POST/PUT/PATCH/DELETE
+  by default; override via `shouldQueue`) made while offline instead of
+  failing them immediately, and replay them — in order, using the same
+  `Idempotency-Key` on every replay attempt — once connectivity returns.
+  `client.post()`/etc. reject with the new `OfflineQueuedError` (carrying
+  `queueId`) instead of a network error when a request gets queued.
+  `persistAdapter` reuses `PipelineStateAdapter` (now generic —
+  `PipelineStateAdapter<T = PipelineExportedState>`, backward compatible),
+  the same interface `PipelineConfig.options.persistAdapter` already uses,
+  rather than a bespoke one. `isOnline`/`onOnlineChange` default to
+  `navigator.onLine`/the browser's `"online"` event; provide your own for
+  Node/React Native. New `client.getQueuedRequests()`/`client.flushQueue()`.
+  `flush()` is a single pass per call, not a backoff loop — a queued request
+  that fails with a genuine HTTP error (a `status`) is removed and reported
+  via `onFlushError`; one that fails with no `status` at all (indistinguishable
+  here from "still offline") is left queued for the next flush.
+  `RequestExecutor`'s own `retry`/`jitterStrategy` still own per-attempt
+  backoff; a queue flush is a coarser cycle triggered by reconnect events.
+  See `examples/offline-queue.ts`.
+- **UMD/CDN build (`dist/umd/rest-pipeline.umd.min.js`)** — a single
+  `<script>` tag now works, no bundler or Node required. Bundles the core
+  module (no Vue/React) as a self-contained IIFE under a `window.RestPipeline`
+  global, with `axios` bundled in (it's already a regular, non-peer
+  dependency) so nothing else needs to be loaded separately. Built via
+  `scripts/build-umd.mjs` (esbuild) from the compiled `dist/esm/index.js`,
+  as the last step of `npm run build`; also publishes an unminified build
+  with a source map for debugging. New `unpkg`/`jsdelivr` `package.json`
+  fields point at the minified file, and `.size-limit.json` enforces the
+  same 28 KB brotli budget as the core ESM entry (currently ~25.3 KB). See
+  the README's "CDN usage" section.
+
+### Fixed
+
+- **`toApiError()` dropped `.status`/`.code` for a plain (non-axios) thrown
+  `Error`.** Only `AxiosError`s had their `status`/`code` extracted; a
+  custom `HttpAdapter` throwing a plain `Error` with `.status` attached (the
+  exact pattern `examples/edge-fetch-adapter.ts` already used) produced an
+  `ApiError` with `status: undefined` everywhere one was needed —
+  `CircuitBreakerConfig.isFailure(error)` in particular couldn't do its
+  documented job of excluding specific status codes (e.g. "don't open the
+  circuit on 4xx") for such adapters. Found while adding the offline queue's
+  own status-based error handling, which surfaced the same gap. Fixed by
+  duck-typing `.status`/`.code`/`.response.status` off any thrown `Error`,
+  matching extraction logic `rest-client.ts` already used elsewhere for
+  non-axios errors.
+- **A `WebSocketStageConfig` race condition that could hang a stage
+  forever.** If `abort()` fired in the narrow window between the initial
+  `signal.aborted` check (before the WebSocket is created) and the
+  `signal.addEventListener('abort', ...)` registration inside the stage's
+  connection-handling promise, the abort event was silently missed — the
+  stage would then wait indefinitely for an `open`/`message`/`close`/`error`
+  event that was never coming, since nothing else would trigger it. Found via
+  a deterministic regression test (`abort()` called from inside
+  `createWebSocket`, landing exactly in that window) rather than by
+  observation — fixed by re-checking `signal.aborted` immediately after the
+  listener is registered.
+
+### Changed
+
+- **`.size-limit.json`'s core/`/vue`/`/react` budget raised from 25 KB to
+  28 KB.** The WebSocket stage brought actual brotli size to ~24.3 KB,
+  leaving almost no margin under the old limit, with a larger feature
+  (offline queue / background sync) still planned. See `CONTRIBUTING.md`'s
+  bundle-size guidance for the policy on bumping this again.
+
+### Documented
+
+- **File uploads and `onUploadProgress`/`onDownloadProgress`.** These already
+  worked with no code changes needed — `RestRequestConfig` extends axios's
+  own `AxiosRequestConfig`, so `data: FormData`/`Blob` and the progress
+  callbacks were already typed and passed through to the axios transport
+  (and, as raw config fields, to custom `HttpAdapter`s too, which are
+  responsible for actually invoking them). They just weren't tested or
+  documented. Added `examples/file-upload.ts`, a README section ("File
+  uploads & progress"), and tests confirming the passthrough for both the
+  axios path and custom adapters.
+
+### Changed
+
+- **Test coverage pass on the retry engine, cache, and Vue/React hooks.** No
+  public API changes. `request-executor.ts` (retry/backoff/Retry-After) went
+  from ~54% to ~90% statement coverage; `cache.ts` (`TtlCache`, including
+  `getStale`/`deleteWhere`/eviction) from ~46% to 100%; `rest-client.ts`'s
+  `cache.strategy: "stale-while-revalidate"` path had no test coverage at all
+  before and now does. Coverage thresholds in `vitest.config.ts` raised from
+  70/72/55/72% (stmts/branches/funcs/lines) to 82/80/78/83%.
+- **Fixed a coverage-attribution (and latent staleness) bug in the Vue/React
+  hook tests.** `tests/vue-hooks.test.ts` and `tests/react-hooks.test.ts`
+  import via the public package specifier (`"rest-pipeline-js/vue"` /
+  `"rest-pipeline-js/react"`), which Vite's self-reference resolution points
+  at the built `dist/esm/*.js` rather than `src/*.ts`. This meant v8 coverage
+  could never instrument the hook source files (they showed 0% despite the
+  tests passing), and — more importantly — the tests were silently exercising
+  whatever was last built into `dist`, not the current `src`: editing a hook
+  and running `npm test` without `npm run build` first would pass against
+  stale compiled output. Fixed via a `resolve.alias` in `vitest.config.ts`
+  that redirects those two specifiers to `src/vue.ts`/`src/react.ts` (test
+  files themselves are unchanged). This also surfaced a real, separate gap —
+  `usePipelineStageResultVue`/`usePipelineStageResultReact` were imported but
+  never actually invoked by any test — now covered.
+- **Removed `@typescript-eslint/no-explicit-any` warnings from
+  `rest-client.ts` and `request-executor.ts`** (11 of the 101 total, both now
+  at 0). `globalThis as any` duck-typing (for `crypto.randomUUID` /
+  `crypto.getRandomValues`) replaced with narrow local types; `catch (err: any)`
+  replaced with `catch (err)` plus one explicit cast per block instead of
+  scattering `any` across each property access; `RequestExecutor.execute`'s
+  default type parameter changed from `T = any` to `T = unknown`, matching
+  `RestClient.request<T = unknown>`'s existing convention (no call-site
+  changes needed — the only internal caller already assigns into an
+  `unknown`-typed variable).
+- **Split the two largest files by domain — no public API or behavior
+  change.** `pipeline-orchestrator.ts` (1677 lines) had its pause/resume,
+  stream-stage, WebSocket-stage, sub-pipeline, and export/import-state logic
+  extracted into `src/orchestrator/*.ts` as standalone functions taking a
+  narrow, purpose-typed `ctx` parameter, leaving `PipelineOrchestrator`
+  itself as a thin facade (1677→1225 lines, -27%). `types.ts` (1276 lines)
+  was split by domain into `types/http.ts`, `types/pipeline.ts`, and
+  `types/plugins.ts`, with `types.ts` reduced to an 8-line re-export barrel
+  so every existing `from "./types.js"` import keeps working unchanged.
+  Verified behavior-preserving after each extraction step via the full test
+  suite (324→332 tests including type-level), coverage (no regression), and
+  bundle size (no growth).
+- **Moved the Vue/React integration files into `src/plugins/vue/` and
+  `src/plugins/react/` — no public API or behavior change.** The 10
+  framework-specific hook files (`usePipelineRun-vue.ts`,
+  `useRestClient-react.ts`, etc.) sat flat in `src/` alongside core logic;
+  each pair is now grouped under its own folder with the now-redundant
+  `-vue`/`-react` filename suffix dropped (e.g. `usePipelineRun-vue.ts` →
+  `plugins/vue/usePipelineRun.ts` — the exported `usePipelineRunVue` name is
+  unchanged). The `vue.ts`/`react.ts` entry-point barrels moved to
+  `plugins/vue/index.ts`/`plugins/react/index.ts` alongside them; the public
+  import specifiers (`rest-pipeline-js/vue`, `rest-pipeline-js/react`) and
+  `package.json` `exports` map are unaffected — only the `dist/esm/**`/
+  `dist/cjs/**` paths they point at shifted to match. Coverage, test count,
+  lint warnings, and every bundle size are byte-for-byte identical to before
+  the move.
+
 ## [2.0.0] - 2026-07-17
 
 Package-quality and reliability pass: fixes a real ESM-loading bug, closes a
@@ -59,7 +296,7 @@ regressions in these areas going forward. Four changes are breaking — see belo
 
 ### Fixed
 
-- **Flaky test in `tests/rest-client.test.ts`** ("при повторном 401 после onUnauthorized — не попадает в бесконечный цикл") — the mock error set `err.isAxiosError = true` *after* `Object.setPrototypeOf(err, axios.AxiosError.prototype)`. `AxiosError.prototype.isAxiosError` is defined as non-writable (`Object.defineProperty(..., { value: true })`), so that assignment threw a `TypeError` in strict mode, which masked the actual 401-retry logic being exercised. Fixed by assigning `isAxiosError` before swapping the prototype, matching the (correct) pattern already used by the other axios-error mocks in the same file. No production code changed.
+- **Flaky test in `tests/rest-client.test.ts`** ("on a repeated 401 after onUnauthorized — does not enter an infinite loop") — the mock error set `err.isAxiosError = true` *after* `Object.setPrototypeOf(err, axios.AxiosError.prototype)`. `AxiosError.prototype.isAxiosError` is defined as non-writable (`Object.defineProperty(..., { value: true })`), so that assignment threw a `TypeError` in strict mode, which masked the actual 401-retry logic being exercised. Fixed by assigning `isAxiosError` before swapping the prototype, matching the (correct) pattern already used by the other axios-error mocks in the same file. No production code changed.
 
 ### Added
 
