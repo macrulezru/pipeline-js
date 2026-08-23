@@ -1,58 +1,74 @@
 <script setup lang="ts">
 import { ref, shallowRef, defineAsyncComponent } from "vue";
 
-const FlightDemo = defineAsyncComponent(() => import("./views/FlightDemo.vue"));
-const ParallelDemo = defineAsyncComponent(
-  () => import("./views/ParallelDemo.vue"),
-);
-const RetryDemo = defineAsyncComponent(() => import("./views/RetryDemo.vue"));
-const CacheDemo = defineAsyncComponent(() => import("./views/CacheDemo.vue"));
-const TracingDemo = defineAsyncComponent(
-  () => import("./views/TracingDemo.vue"),
-);
+const CiCdDashboard = defineAsyncComponent(() => import("./views/CiCdDashboard.vue"));
+const TradingTerminal = defineAsyncComponent(() => import("./views/TradingTerminal.vue"));
+const AuthProviderDemo = defineAsyncComponent(() => import("./views/AuthProviderDemo.vue"));
+const PaginationDemo = defineAsyncComponent(() => import("./views/PaginationDemo.vue"));
+const SchemaValidationDemo = defineAsyncComponent(() => import("./views/SchemaValidationDemo.vue"));
+const OrchestrationDemo = defineAsyncComponent(() => import("./views/OrchestrationDemo.vue"));
 
-const demos = [
+const sections = [
   {
-    id: "flight",
-    icon: "✈️",
-    title: "Flight Pipeline",
-    subtitle: "Sequential stages · sharedData",
-    component: FlightDemo,
+    label: "Flagship",
+    demos: [
+      {
+        id: "cicd",
+        icon: "🚦",
+        title: "CI/CD Pipeline",
+        subtitle: "Parallel · retry · circuit breaker · pause/resume",
+        component: CiCdDashboard,
+      },
+      {
+        id: "trading",
+        icon: "📈",
+        title: "Trading Terminal",
+        subtitle: "WebSocket · auth · rate limit · offline queue",
+        component: TradingTerminal,
+      },
+    ],
   },
   {
-    id: "parallel",
-    icon: "🔀",
-    title: "Parallel Loading",
-    subtitle: "pipe() builder · concurrent",
-    component: ParallelDemo,
-  },
-  {
-    id: "retry",
-    icon: "🛡️",
-    title: "Retry & Recovery",
-    subtitle: "Backoff · abort · pause/resume",
-    component: RetryDemo,
-  },
-  {
-    id: "cache",
-    icon: "⚡",
-    title: "Cache & Rate Limit",
-    subtitle: "HTTP optimization · metrics",
-    component: CacheDemo,
-  },
-  {
-    id: "tracing",
-    icon: "🔑",
-    title: "Idempotency & Tracing",
-    subtitle: "autoIdempotencyKey · traceparent",
-    component: TracingDemo,
+    label: "Feature showcase",
+    demos: [
+      {
+        id: "auth",
+        icon: "🔐",
+        title: "Auth Provider",
+        subtitle: "getToken · 401 → refresh → retry",
+        component: AuthProviderDemo,
+      },
+      {
+        id: "pagination",
+        icon: "📄",
+        title: "Pagination",
+        subtitle: "paginate() · cursor vs offset",
+        component: PaginationDemo,
+      },
+      {
+        id: "validation",
+        icon: "🧪",
+        title: "Schema Validation",
+        subtitle: "validateInput / validateOutput",
+        component: SchemaValidationDemo,
+      },
+      {
+        id: "orchestration",
+        icon: "🕸️",
+        title: "Advanced Orchestration",
+        subtitle: "DAG · subPipeline · plugins · export/import",
+        component: OrchestrationDemo,
+      },
+    ],
   },
 ];
 
-const activeId = ref("flight");
-const ActiveComponent = shallowRef(FlightDemo);
+const allDemos = sections.flatMap((section) => section.demos);
 
-function navigate(demo: (typeof demos)[number]) {
+const activeId = ref("cicd");
+const ActiveComponent = shallowRef(CiCdDashboard);
+
+function navigate(demo: (typeof allDemos)[number]) {
   activeId.value = demo.id;
   ActiveComponent.value = demo.component;
 }
@@ -71,19 +87,22 @@ function navigate(demo: (typeof demos)[number]) {
       </div>
 
       <nav class="sidebar-nav">
-        <button
-          v-for="demo in demos"
-          :key="demo.id"
-          class="nav-item"
-          :class="{ 'nav-item--active': activeId === demo.id }"
-          @click="navigate(demo)"
-        >
-          <span class="nav-item__icon">{{ demo.icon }}</span>
-          <div class="nav-item__text">
-            <div class="nav-item__title">{{ demo.title }}</div>
-            <div class="nav-item__sub">{{ demo.subtitle }}</div>
-          </div>
-        </button>
+        <template v-for="section in sections" :key="section.label">
+          <div class="nav-section">{{ section.label }}</div>
+          <button
+            v-for="demo in section.demos"
+            :key="demo.id"
+            class="nav-item"
+            :class="{ 'nav-item--active': activeId === demo.id }"
+            @click="navigate(demo)"
+          >
+            <span class="nav-item__icon">{{ demo.icon }}</span>
+            <div class="nav-item__text">
+              <div class="nav-item__title">{{ demo.title }}</div>
+              <div class="nav-item__sub">{{ demo.subtitle }}</div>
+            </div>
+          </button>
+        </template>
       </nav>
 
       <div class="sidebar-links">

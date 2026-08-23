@@ -10,6 +10,5 @@
     "noEmit": true,
     "types": ["vitest/globals", "vitest/importMeta"]
   },
-  "include": ["src/**/*.ts", "tests/**/*.test-d.ts"],
-  "exclude": ["src/vue-demo"]
+  "include": ["src/**/*.ts", "tests/**/*.test-d.ts"]
 }

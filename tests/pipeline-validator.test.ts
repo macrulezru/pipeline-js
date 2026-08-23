@@ -1,8 +1,8 @@
-import { validatePipelineConfig } from "../src/pipeline-validator";
+import { validatePipelineConfig } from "../src/pipeline/pipeline-validator";
 import type { PipelineConfig } from "../src/types";
 
 describe("validatePipelineConfig", () => {
-  it("валидный конфиг проходит без ошибок", () => {
+  it("a valid config passes without errors", () => {
     const config: PipelineConfig = {
       stages: [
         { key: "a", request: async () => 1 },
@@ -14,25 +14,25 @@ describe("validatePipelineConfig", () => {
     expect(result.errors).toEqual([]);
   });
 
-  it("config не объект — ошибка", () => {
+  it("config is not an object -> error", () => {
     const result = validatePipelineConfig(null as any);
     expect(result.valid).toBe(false);
     expect(result.errors[0]).toMatch(/must be an object/);
   });
 
-  it("stages не массив — ошибка", () => {
+  it("stages is not an array -> error", () => {
     const result = validatePipelineConfig({ stages: "nope" } as any);
     expect(result.valid).toBe(false);
     expect(result.errors[0]).toMatch(/must be an array/);
   });
 
-  it("пустой stages — ошибка", () => {
+  it("empty stages -> error", () => {
     const result = validatePipelineConfig({ stages: [] });
     expect(result.valid).toBe(false);
     expect(result.errors[0]).toMatch(/must not be empty/);
   });
 
-  it("пустой/некорректный key шага — ошибка", () => {
+  it("empty/invalid step key -> error", () => {
     const result = validatePipelineConfig({
       stages: [{ key: "", request: async () => 1 }],
     } as PipelineConfig);
@@ -40,7 +40,7 @@ describe("validatePipelineConfig", () => {
     expect(result.errors[0]).toMatch(/non-empty string/);
   });
 
-  it("дублирующиеся ключи — ошибка", () => {
+  it("duplicate keys -> error", () => {
     const result = validatePipelineConfig({
       stages: [
         { key: "a", request: async () => 1 },
@@ -51,7 +51,7 @@ describe("validatePipelineConfig", () => {
     expect(result.errors.some((e) => e.includes('duplicate stage key: "a"'))).toBe(true);
   });
 
-  it("request не функция — ошибка", () => {
+  it("request is not a function -> error", () => {
     const result = validatePipelineConfig({
       stages: [{ key: "a", request: "nope" as any }],
     });
@@ -59,7 +59,7 @@ describe("validatePipelineConfig", () => {
     expect(result.errors[0]).toMatch(/request must be a function/);
   });
 
-  it("condition не функция — ошибка", () => {
+  it("condition is not a function -> error", () => {
     const result = validatePipelineConfig({
       stages: [{ key: "a", request: async () => 1, condition: "nope" as any }],
     });
@@ -67,7 +67,7 @@ describe("validatePipelineConfig", () => {
     expect(result.errors[0]).toMatch(/condition must be a function/);
   });
 
-  it("отрицательный retryCount — ошибка", () => {
+  it("negative retryCount -> error", () => {
     const result = validatePipelineConfig({
       stages: [{ key: "a", request: async () => 1, retryCount: -1 }],
     });
@@ -75,7 +75,7 @@ describe("validatePipelineConfig", () => {
     expect(result.errors[0]).toMatch(/retryCount must be a non-negative number/);
   });
 
-  it("timeoutMs <= 0 — ошибка", () => {
+  it("timeoutMs <= 0 -> error", () => {
     const result = validatePipelineConfig({
       stages: [{ key: "a", request: async () => 1, timeoutMs: 0 }],
     });
@@ -83,7 +83,7 @@ describe("validatePipelineConfig", () => {
     expect(result.errors[0]).toMatch(/timeoutMs must be a positive number/);
   });
 
-  it("параллельная группа: валидный key и непустой parallel[]", () => {
+  it("parallel group: valid key and non-empty parallel[]", () => {
     const result = validatePipelineConfig({
       stages: [
         {
@@ -98,7 +98,7 @@ describe("validatePipelineConfig", () => {
     expect(result.valid).toBe(true);
   });
 
-  it("параллельная группа: пустой parallel[] — ошибка", () => {
+  it("parallel group: empty parallel[] -> error", () => {
     const result = validatePipelineConfig({
       stages: [{ key: "grp", parallel: [] }],
     } as any);
@@ -106,7 +106,7 @@ describe("validatePipelineConfig", () => {
     expect(result.errors[0]).toMatch(/must have at least one stage/);
   });
 
-  it("параллельная группа: дублирующийся key внутри группы — ошибка", () => {
+  it("parallel group: duplicate key within the group -> error", () => {
     const result = validatePipelineConfig({
       stages: [
         {
@@ -122,14 +122,14 @@ describe("validatePipelineConfig", () => {
     expect(result.errors.some((e) => e.includes('duplicate stage key: "a"'))).toBe(true);
   });
 
-  it("stream-шаг: валидная функция stream", () => {
+  it("stream step: valid stream function", () => {
     const result = validatePipelineConfig({
       stages: [{ key: "s", stream: async function* () { yield 1; } }],
     } as any);
     expect(result.valid).toBe(true);
   });
 
-  it("stream-шаг: stream не функция — ошибка", () => {
+  it("stream step: stream is not a function -> error", () => {
     const result = validatePipelineConfig({
       stages: [{ key: "s", stream: "nope" }],
     } as any);
@@ -137,7 +137,7 @@ describe("validatePipelineConfig", () => {
     expect(result.errors[0]).toMatch(/stream must be a function/);
   });
 
-  it("sub-pipeline: рекурсивная валидация вложенного конфига", () => {
+  it("sub-pipeline: recursively validates the nested config", () => {
     const result = validatePipelineConfig({
       stages: [
         {
@@ -150,7 +150,7 @@ describe("validatePipelineConfig", () => {
     expect(result.errors.some((e) => e.includes("subPipeline:sub"))).toBe(true);
   });
 
-  it("sub-pipeline: валидный вложенный конфиг проходит", () => {
+  it("sub-pipeline: a valid nested config passes", () => {
     const result = validatePipelineConfig({
       stages: [
         {
@@ -162,7 +162,7 @@ describe("validatePipelineConfig", () => {
     expect(result.valid).toBe(true);
   });
 
-  it("собирает несколько ошибок одновременно, не останавливаясь на первой", () => {
+  it("collects multiple errors at once, without stopping at the first one", () => {
     const result = validatePipelineConfig({
       stages: [
         { key: "", request: async () => 1 },

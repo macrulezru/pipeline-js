@@ -22,6 +22,8 @@
   --error-glow:    rgba(220, 38, 38, 0.15);
   --warning:       #d97706;
   --warning-glow:  rgba(215, 119, 6, 0.15);
+  --cyan:          #22d3ee;
+  --cyan-glow:     rgba(34, 211, 238, 0.15);
 
   --radius:        12px;
   --radius-sm:     8px;
@@ -123,6 +125,16 @@ body {
 .nav-item__sub   { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
 .nav-item--active .nav-item__sub { color: var(--primary-light); opacity: 0.8; }
 
+.nav-section {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  padding: 14px 12px 6px;
+}
+.nav-section:first-child { padding-top: 4px; }
+
 /* ── Sidebar Links ──────────────────────────────────────────── */
 .sidebar-links {
   display: flex;
@@ -210,6 +222,11 @@ body {
   border-color: rgba(37, 99, 235, 0.5);
   color: #60a5fa;
   background: var(--blue-glow);
+}
+.tag--cyan {
+  border-color: rgba(34, 211, 238, 0.5);
+  color: var(--cyan);
+  background: var(--cyan-glow);
 }
 
 /* ── Controls ────────────────────────────────────────────────── */
@@ -619,8 +636,8 @@ body {
   margin-bottom: 12px;
 }
 
-/* ── Boarding Pass ───────────────────────────────────────────── */
-.boarding-pass {
+/* ── Build summary (CI/CD flagship result card) ─────────────── */
+.build-summary {
   background: linear-gradient(135deg, #1a1040 0%, #0f1929 100%);
   border: 1px solid rgba(124, 58, 237, 0.4);
   border-radius: 16px;
@@ -628,48 +645,69 @@ body {
   margin-bottom: 24px;
   box-shadow: 0 0 40px rgba(124, 58, 237, 0.12);
 }
-.boarding-pass__inner {
+.build-summary__inner { padding: 24px 28px; }
+.build-summary__head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 18px;
+}
+.build-summary__icon { font-size: 28px; }
+.build-summary__title {
+  font-size: 20px;
+  font-weight: 800;
+  font-family: var(--font-mono);
+  color: var(--text);
+  letter-spacing: -0.02em;
+}
+.build-summary__sub { font-size: 12px; color: var(--text-sub); margin-top: 2px; }
+.build-summary__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 16px 24px;
+  border-top: 1px dashed var(--border);
+  padding-top: 18px;
+}
+.bs-field__label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-dim);
+  margin-bottom: 3px;
+}
+.bs-field__value {
+  font-size: 16px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: var(--text);
+}
+
+/* ── Trade ticket (Trading flagship result card) ────────────── */
+.trade-ticket {
+  background: linear-gradient(135deg, #0a2a2e 0%, #0f1929 100%);
+  border: 1px solid rgba(34, 211, 238, 0.35);
+  border-radius: 16px;
+  overflow: hidden;
+  margin-bottom: 24px;
+  box-shadow: 0 0 40px rgba(34, 211, 238, 0.1);
+}
+.trade-ticket__inner {
   padding: 24px 28px;
   display: flex;
   align-items: stretch;
   gap: 0;
 }
-.boarding-pass__main { flex: 1; }
-.boarding-pass__route {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  margin-bottom: 20px;
-}
-.bp-airport__code {
-  font-size: 36px;
+.trade-ticket__main { flex: 1; }
+.trade-ticket__symbol {
+  font-size: 32px;
   font-weight: 800;
   font-family: var(--font-mono);
   color: var(--text);
-  letter-spacing: -0.03em;
+  letter-spacing: -0.02em;
   line-height: 1;
 }
-.bp-airport__name {
-  font-size: 12px;
-  color: var(--text-sub);
-  margin-top: 4px;
-}
-.bp-plane {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  color: var(--primary-light);
-}
-.bp-plane__icon { font-size: 20px; }
-.bp-plane__line {
-  width: 100%;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, var(--primary-light), transparent);
-  opacity: 0.4;
-}
-.boarding-pass__divider {
+.trade-ticket__side { font-size: 12px; margin-top: 6px; }
+.trade-ticket__divider {
   width: 1px;
   background: repeating-linear-gradient(
     to bottom,
@@ -681,30 +719,60 @@ body {
   margin: 0 24px;
   flex-shrink: 0;
 }
-.boarding-pass__details {
+.trade-ticket__details {
   display: grid;
-  grid-template-columns: repeat(3, auto);
+  grid-template-columns: repeat(2, auto);
   gap: 16px 24px;
   align-content: start;
-  min-width: 220px;
+  min-width: 200px;
 }
-.bp-field__label {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: var(--text-dim);
-  margin-bottom: 3px;
-}
-.bp-field__value {
-  font-size: 16px;
-  font-weight: 700;
+
+/* ── Live console (build logs / tick feed) ──────────────────── */
+.console {
+  background: #010409;
+  border: 1px solid var(--border2);
+  border-radius: var(--radius);
   font-family: var(--font-mono);
-  color: var(--text);
+  font-size: 12px;
+  line-height: 1.8;
+  padding: 14px 16px;
+  max-height: 260px;
+  overflow-y: auto;
+  margin-bottom: 20px;
 }
-.bp-field__value--seat {
-  font-size: 22px;
-  color: var(--primary-light);
+.console__line { display: flex; gap: 10px; animation: fadeInUp 0.15s ease; }
+.console__time { color: var(--text-dim); flex-shrink: 0; }
+.console__text { color: #c9d1d9; overflow-wrap: break-word; }
+.console__line--success .console__text { color: #4ade80; }
+.console__line--error   .console__text { color: #f87171; }
+.console__line--warn    .console__text { color: #fbbf24; }
+.console__cursor {
+  display: inline-block;
+  width: 6px;
+  height: 12px;
+  background: var(--primary-light);
+  animation: blink 1s step-start infinite;
+  vertical-align: text-bottom;
 }
+
+/* ── Sparkline ───────────────────────────────────────────────── */
+.sparkline { display: block; overflow: visible; }
+.sparkline path { fill: none; stroke-width: 1.5; }
+
+/* ── Live ticker (flash-on-change price) ────────────────────── */
+.ticker {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  transition: color 0.3s;
+}
+.ticker--up   { animation: flash-up 0.5s ease; }
+.ticker--down { animation: flash-down 0.5s ease; }
+.ticker__delta { font-size: 11px; }
+.ticker__delta--up   { color: #4ade80; }
+.ticker__delta--down { color: #f87171; }
 
 /* ── Animations ──────────────────────────────────────────────── */
 @keyframes spin {
@@ -721,6 +789,14 @@ body {
 @keyframes blink {
   0%, 100% { opacity: 1; }
   50%       { opacity: 0.3; }
+}
+@keyframes flash-up {
+  0%   { color: #4ade80; }
+  100% { color: var(--text); }
+}
+@keyframes flash-down {
+  0%   { color: #f87171; }
+  100% { color: var(--text); }
 }
 
 /* Vue transitions */

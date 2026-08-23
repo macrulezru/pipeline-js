@@ -11,6 +11,5 @@
     "forceConsistentCasingInFileNames": true,
     "typeRoots": ["./node_modules/@types"]
   },
-  "include": ["src/*.ts"],
-  "exclude": ["src/vue-demo"]
+  "include": ["src/**/*.ts"]
 }

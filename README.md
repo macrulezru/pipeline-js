@@ -21,13 +21,16 @@ Flexible, modular pipeline orchestrator for REST APIs — sequential and paralle
 
 - [Features](#features)
 - [Installation](#installation)
+- [CDN usage](#cdn-usage)
 - [Demo](#demo)
 - [Examples](#examples)
 - [Quick start](#quick-start)
 - [createRestClient](#createrestclient)
 - [Custom cache backend (CacheStore)](#custom-cache-backend-cachestore)
 - [Distributed rate limiting (RateLimiterStore)](#distributed-rate-limiting-ratelimiterstore)
+- [Proactive throttling from rate-limit response headers](#proactive-throttling-from-rate-limit-response-headers)
 - [Idempotency keys](#idempotency-keys)
+- [Offline queue](#offline-queue)
 - [Request tracing](#request-tracing)
 - [Auth Provider](#auth-provider)
 - [Log Sanitization](#log-sanitization)
@@ -43,13 +46,17 @@ Flexible, modular pipeline orchestrator for REST APIs — sequential and paralle
 - [Pipeline metrics](#pipeline-metrics)
 - [Correlating a run (runId)](#correlating-a-run-runid)
 - [createPipeline() + pipe() builder](#createpipeline--pipe-builder)
+- [Schema validation (validateInput / validateOutput)](#schema-validation-validateinput--validateoutput)
 - [validatePipelineConfig()](#validatepipelineconfig)
 - [Plugin system](#plugin-system)
 - [Persist adapter](#persist-adapter)
 - [Stream stages](#stream-stages-sse--asynciterable)
+- [WebSocket stages](#websocket-stages)
+- [Pagination](#pagination)
 - [HTTP Adapter](#http-adapter-custom-fetch--edge-environments)
 - [Vue integration](#vue-integration)
 - [React integration](#react-integration)
+- [Testing](#testing)
 - [Entry points](#entry-points)
 - [Architecture](#architecture)
 - [Bundle size & peer dependencies](#bundle-size--peer-dependencies)
@@ -62,13 +69,15 @@ Flexible, modular pipeline orchestrator for REST APIs — sequential and paralle
 - **`createRestClient()`** — full-featured HTTP client built on top of axios: retry with exponential backoff and `Retry-After` support, response caching with a pluggable `CacheStore` backend (incl. targeted `invalidateCache()`), rate limiting (concurrency + req/interval) with a pluggable distributed `RateLimiterStore`, circuit breaker with a pluggable distributed `CircuitBreakerStore`, auth provider with automatic 401 refresh and optional token caching, request cancellation by key, custom HTTP adapters
 - **Request tracing** — W3C `traceparent` header generation plus a `TracingProvider` hook (duck-typed against OpenTelemetry's `Span` API) for wiring in a real tracing backend
 - **Idempotency keys** — `Idempotency-Key` header on mutating requests, manual or auto-generated per logical request across retry attempts
-- **`PipelineOrchestrator`** — sequential and parallel stage execution; each stage has `condition`, `before`, `request`, `after`, `errorHandler` hooks (all receive the pipeline's `AbortSignal`); `sharedData` pool shared across all stages
+- **Offline queue** — queue mutating requests made while offline and replay them (same idempotency key on every attempt) once back online; pluggable persistence, `isOnline`/`onOnlineChange` for non-browser environments
+- **`PipelineOrchestrator`** — sequential and parallel stage execution; each stage has `condition`, `before`, `request`, `after`, `validateInput`, `validateOutput`, `errorHandler` hooks (all receive the pipeline's `AbortSignal`); `sharedData` pool shared across all stages
 - **Error recovery** — `errorHandler` can return `recoverStep(data)` to turn a failed stage back into a successful one and keep the pipeline going, instead of only transforming the error
 - **Global middleware** — `beforeEach` / `afterEach` / `onError` hooks that apply to every stage without modifying individual configs
 - **Parallel groups** — multiple stages run concurrently via `Promise.all`, or through a bounded pool via `concurrency`; single failure stops the group
 - **Pause / Resume / Abort** — `pause()` waits after the current stage; `resume()` continues; `abort()` cancels the current HTTP request and propagates its `AbortSignal` into every stage hook so custom `request`/`before`/`after` functions can cancel their own work too
 - **Export / Import state** — serialize `stageResults` + logs to a plain object; restore on the next page load
 - **Stream stages** — `stream: async function*` for SSE / any `AsyncIterable`; `onChunk` callback in real time; abort-aware
+- **WebSocket stages** — a stage over a persistent connection (`onOpen`/`onMessage`/`onClose`/`onError`, `closeOn`); pluggable `createWebSocket` (defaults to `globalThis.WebSocket`) for Node <22/edge runtimes
 - **Pipeline metrics & run correlation** — `onPipelineStart`, `onPipelineEnd`, `onStepDuration` callbacks, plus a `runId` (also on `getRunId()`, log entries, and step events) shared by every callback/event from the same run
 - **`createPipeline()` / `pipe()` builder** — short factory and fluent builder API for common patterns; in TypeScript, `pipe().step()` chains infer `prev`'s type from the previous step automatically
 - **`validatePipelineConfig()`** — catch duplicate keys, empty keys, type errors before runtime
@@ -77,6 +86,8 @@ Flexible, modular pipeline orchestrator for REST APIs — sequential and paralle
 - **Log sanitization** — mask sensitive headers (`authorization`, `x-api-key`, `cookie`, …) in metrics callbacks, on by default
 - **Vue integration** — `usePipelineRunVue`, `usePipelineProgressVue`, and more (import from `rest-pipeline-js/vue`)
 - **React integration** — `usePipelineRunReact`, `usePipelineProgressReact`, and more (import from `rest-pipeline-js/react`)
+- **`paginate()` / `paginateAll()` / `flattenPages()`** — iterate a paginated API (cursor- or offset/limit-based) as an `AsyncGenerator<T[]>`, standalone or as a `StreamStageConfig` source
+- **`createMockAdapter()`** (separate `rest-pipeline-js/testing` entry point) — route-based `HttpAdapter` for testing code that uses this package without a real backend, with call history and sequenced responses for exercising retry
 - **Tree-shakeable** — `sideEffects: false`; Vue and React entry points are code-split
 
 ---
@@ -99,9 +110,46 @@ npm install react@>=19 react-dom@>=19
 
 ---
 
+## CDN usage
+
+No bundler, no Node — a single `<script>` tag pulls in the core module
+(`PipelineOrchestrator` / `createRestClient` / everything under the
+[core entry point](#entry-points), no Vue/React) with `axios` bundled in, so
+nothing else needs to be loaded separately. Built as a self-contained IIFE
+that exposes a `window.RestPipeline` global — a plain `<script>` tag, no
+CommonJS/AMD loader support:
+
+```html
+<script src="https://unpkg.com/rest-pipeline-js/dist/umd/rest-pipeline.umd.min.js"></script>
+<script>
+  const { createRestClient, PipelineOrchestrator } = RestPipeline;
+
+  const client = createRestClient({ baseURL: "https://api.example.com" });
+
+  const pipeline = new PipelineOrchestrator({
+    config: {
+      stages: [{ key: "user", request: () => client.get("/me") }],
+    },
+  });
+
+  pipeline.run().then((result) => console.log(result));
+</script>
+```
+
+Pin a version for production use (`rest-pipeline-js@2.1.0/dist/umd/...`) —
+the unpinned URL above always resolves to the latest release. jsDelivr works
+the same way: `https://cdn.jsdelivr.net/npm/rest-pipeline-js/dist/umd/rest-pipeline.umd.min.js`.
+
+An unminified build with a source map (`rest-pipeline.umd.js`) is also
+published, for debugging.
+
+---
+
 ## Demo
 
-A multi-scenario interactive demo showcasing the key features of `rest-pipeline-js`. All demos use real public REST APIs.
+A multi-scenario interactive demo showcasing the key features of `rest-pipeline-js`, running entirely against a
+local mock API mounted directly on the Vite dev server (`demo/server/`) — real HTTP/WebSocket/SSE round-trips
+with genuine network timing, no external service, no flaky third-party dependency.
 
 ```bash
 git clone https://github.com/macrulezru/pipeline-js.git
@@ -112,13 +160,14 @@ npm run demo:vue
 
 Opens at `http://localhost:3000`. The demo app lives in the `demo/` directory.
 
-| Demo                      | What it shows                                                                                               |
-| ------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| ✈️ **Flight Pipeline**    | 4-stage sequential pipeline with `sharedData`, `pauseBefore`/`pauseAfter`, middleware, boarding pass result |
-| 🔀 **Parallel Loading**   | `pipe()` fluent builder with `.parallel([])` — 3 sources queried simultaneously, timing breakdown           |
-| 🛡️ **Retry & Recovery**   | Configurable flaky stage with exponential backoff, event log, `abort()`, pause/resume between stages        |
-| ⚡ **Cache & Rate Limit** | `createRestClient()` with cache TTL — see server vs cache timing; rate limiter burst visualization          |
-| 🔑 **Idempotency & Tracing** | A flaky mutation retried by `RequestExecutor` with `autoIdempotencyKey` — same key on every attempt; `tracing.generateTraceparent` correlating requests under one trace-id |
+| Demo                              | What it shows                                                                                                          |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| 🚦 **CI/CD Pipeline**              | Parallel per-service builds, a nested `subPipeline`, automatic retry/backoff with selectable `jitterStrategy`, a real `pause()`/`resume()` manual approval gate, a `next()` DAG branch for hotfixes, a live SSE log stream, a `PipelinePlugin`, and `exportState()`/`importState()` |
+| 📈 **Trading Terminal**            | A `.websocket()` stage streaming live price ticks, `AuthProvider` login, idempotent order placement, real `X-RateLimit-*` headers driving `onRateLimitHeaders`/`throttleFor()`, an offline order queue, and a circuit breaker on the broker endpoint |
+| 🔐 **Auth Provider**               | Isolated `getToken()`/`onUnauthorized()` cycle — token caching, manual expiry, and the automatic 401 → refresh → retry sequence |
+| 📄 **Pagination**                  | `paginate()` as an `AsyncGenerator` — cursor vs offset strategy toggle over the same build-history dataset            |
+| 🧪 **Schema Validation**           | `validateOutput` catching a malformed response, contrasted with `recoverStep()` rescuing the step                     |
+| 🕸️ **Advanced Orchestration**      | `next()` DAG branch, nested `subPipeline`, a `PipelinePlugin`, and `exportState()`/`importState()` into a fresh orchestrator instance |
 
 ---
 
@@ -129,13 +178,20 @@ Focused, copy-pasteable snippets (as opposed to the interactive demo app above) 
 | File                                                              | Shows                                                                              |
 | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
 | [`pagination-fanout.ts`](./examples/pagination-fanout.ts)         | Fanning out many paginated requests in parallel with a `concurrency` cap            |
+| [`pagination-stream.ts`](./examples/pagination-stream.ts)         | `paginate()`/`flattenPages()`/`paginateAll()` — cursor/offset pagination as an async iterator |
 | [`edge-fetch-adapter.ts`](./examples/edge-fetch-adapter.ts)       | A custom `HttpAdapter` on native `fetch` for Cloudflare Workers / Deno / edge       |
+| [`file-upload.ts`](./examples/file-upload.ts)                     | `FormData` uploads with `onUploadProgress`/`onDownloadProgress`, plus a custom-adapter sketch |
 | [`sse-stream.ts`](./examples/sse-stream.ts)                       | A `StreamStageConfig` step consuming a Server-Sent Events endpoint chunk by chunk   |
+| [`websocket-stage.ts`](./examples/websocket-stage.ts)             | A `WebSocketStageConfig` step over a persistent connection                         |
 | [`redis-cache-store.ts`](./examples/redis-cache-store.ts)         | A `CacheStore` backed by Redis, shared across multiple server instances             |
 | [`redis-rate-limiter-store.ts`](./examples/redis-rate-limiter-store.ts) | A `RateLimiterStore` backed by Redis, shared across multiple server instances |
+| [`proactive-rate-limit-throttling.ts`](./examples/proactive-rate-limit-throttling.ts) | Throttling from `X-RateLimit-*`/`RateLimit-*` response headers before hitting a 429 |
 | [`redis-circuit-breaker-store.ts`](./examples/redis-circuit-breaker-store.ts) | A `CircuitBreakerStore` backed by Redis, shared across multiple server instances |
 | [`opentelemetry-tracing.ts`](./examples/opentelemetry-tracing.ts) | W3C `traceparent` + a `TracingProvider` hook, correlated with a pipeline's `runId`  |
 | [`idempotent-mutations.ts`](./examples/idempotent-mutations.ts)   | `Idempotency-Key` on mutating requests, manual or auto-generated across retries     |
+| [`zod-validation.ts`](./examples/zod-validation.ts)                | A `withZodSchema()` adapter for `validateInput`/`validateOutput`                    |
+| [`mock-adapter.ts`](./examples/mock-adapter.ts)                    | `createMockAdapter()` for testing code that uses this package without a real backend |
+| [`offline-queue.ts`](./examples/offline-queue.ts)                  | Queueing mutating requests while offline and replaying them once back online |
 
 ---
 
@@ -206,6 +262,8 @@ Creates a REST client with advanced HTTP features.
 | `clearCache()`                          | Clear this client's entire response cache (`async`) |
 | `invalidateCache(matcher)`               | Clear only cache entries whose URL matches `matcher` (substring, `RegExp`, or `(info) => boolean`); returns (`Promise<number>`) the number of entries removed |
 | `getCircuitBreakerState()`              | `Promise<"closed" \| "open" \| "half-open" \| null>` — `null` if `circuitBreaker` isn't configured. Resolves synchronously (no real async work) unless `circuitBreaker.store` is set |
+| `getQueuedRequests()`                   | `Promise<QueuedRequest[]>` — requests awaiting the next offline-queue flush (empty if `offlineQueue` isn't configured) |
+| `flushQueue()`                          | Manually attempt to send everything queued (also happens automatically on reconnect); no-op if `offlineQueue` isn't configured |
 
 ### HttpConfig options
 
@@ -220,6 +278,7 @@ Creates a REST client with advanced HTTP features.
 | `retry.backoffMultiplier`          | Exponential backoff multiplier                                                   |
 | `retry.retriableStatus`            | HTTP status codes eligible for retry (e.g. `[429, 500, 503]`)                    |
 | `retry.maxRetryAfterMs`            | Max wait from `Retry-After` header in ms (default: `60000`)                      |
+| `retry.jitterStrategy`             | Backoff jitter algorithm: `"fixed"` (default), `"full"`, or `"decorrelated"`     |
 | `cache.enabled`                    | Enable response caching for GET requests                                         |
 | `cache.ttlMs`                      | Cache TTL in ms                                                                  |
 | `cache.strategy`                   | `"strict"` (default) or `"stale-while-revalidate"`                              |
@@ -231,6 +290,7 @@ Creates a REST client with advanced HTTP features.
 | `rateLimit.store`                  | Custom `RateLimiterStore` backend (e.g. Redis) for a limit shared across server instances — see [Distributed rate limiting](#distributed-rate-limiting-ratelimiterstore) |
 | `rateLimit.key`                    | Bucket name when using a shared `rateLimit.store` (default: random per-instance id — without an explicit `key`, a `store` has no sharing effect) |
 | `rateLimit.leaseMs`                | Auto-expiry (ms) for a `store`-backed concurrency slot if its holder crashes without releasing (default: `30000`) |
+| `rateLimit.onRateLimitHeaders`     | Callback with the raw response headers of every request (success or error) — proactively throttle from `X-RateLimit-*`/similar headers instead of only reacting to 429. See [Proactive throttling](#proactive-throttling-from-rate-limit-response-headers) |
 | `metrics.onRequestStart`           | Callback on request start                                                        |
 | `metrics.onRequestEnd`             | Callback on request end (includes duration and bytes)                            |
 | `auth.getToken`                    | Async function returning a Bearer token (called before every request, unless `auth.tokenTtlMs` is set) |
@@ -244,6 +304,7 @@ Creates a REST client with advanced HTTP features.
 | `tracing.provider`                 | `TracingProvider` hook creating a span per request — see [Request tracing](#request-tracing) |
 | `idempotencyHeaderName`            | Header name used for `RestRequestConfig.idempotencyKey` (default: `"Idempotency-Key"`) — see [Idempotency keys](#idempotency-keys) |
 | `autoIdempotencyKey`               | Have `RequestExecutor` auto-generate an idempotency key per logical request (default: `false`) — see [Idempotency keys](#idempotency-keys) |
+| `offlineQueue`                     | Queue mutating requests made while offline and replay them once back online — `{ enabled, persistAdapter, isOnline?, onOnlineChange?, shouldQueue?, maxQueueSize?, onFlushSuccess?, onFlushError? }`. See [Offline queue](#offline-queue) |
 
 ### Per-request cache override
 
@@ -254,6 +315,29 @@ const res = await client.get("/data", {
   cacheKey: "my-custom-key",
 });
 ```
+
+### File uploads & progress
+
+`RestRequestConfig` extends axios's own `AxiosRequestConfig`, so `data` can be a `FormData`/`Blob`/`ArrayBuffer` and `onUploadProgress`/`onDownloadProgress` are already typed and wired through — no extra configuration needed on the default (axios) transport:
+
+```js
+const formData = new FormData();
+formData.append("file", fileInput.files[0]);
+
+await client.post("/upload", formData, {
+  onUploadProgress: (event) => {
+    const percent = event.total ? Math.round((event.loaded / event.total) * 100) : 0;
+    console.log(`Uploaded ${percent}%`);
+  },
+});
+
+await client.get("/large-report.csv", {
+  responseType: "blob",
+  onDownloadProgress: (event) => console.log(event.loaded, "bytes received"),
+});
+```
+
+If you use a custom `adapter` (see [HTTP Adapter](#http-adapter-custom-fetch--edge-environments)) instead of the built-in axios transport, `onUploadProgress`/`onDownloadProgress` are still passed through to your adapter's `config` object as-is, but the adapter is responsible for actually calling them — `fetch` has no native upload-progress event, so a `fetch`-based adapter needs a `ReadableStream` reader (or `XMLHttpRequest`) to implement it. See [`examples/file-upload.ts`](./examples/file-upload.ts).
 
 ### Targeted cache invalidation
 
@@ -378,6 +462,32 @@ See [`examples/redis-rate-limiter-store.ts`](./examples/redis-rate-limiter-store
 
 ---
 
+## Proactive throttling from rate-limit response headers
+
+By default, the rate limiter only reacts *after* a request fails (429 + `Retry-After`, or the circuit breaker tripping). Many APIs also tell you how close you are to the limit on every response — `X-RateLimit-Remaining`, the IETF-draft `RateLimit-Remaining`, or a vendor-specific header. `rateLimit.onRateLimitHeaders` lets you read those and throttle proactively, before you actually get a 429:
+
+```ts
+const client = createRestClient({
+  baseURL: "https://api.example.com",
+  rateLimit: {
+    onRateLimitHeaders: (headers, control) => {
+      const remaining = Number(headers["x-ratelimit-remaining"]);
+      const resetSec = Number(headers["x-ratelimit-reset"]);
+      if (remaining === 0 && Number.isFinite(resetSec)) {
+        control.throttleFor(resetSec * 1000);
+      }
+    },
+  },
+});
+```
+
+Notes:
+- The callback runs after **every** response — success and error alike (a 429 response usually carries the same headers as a normal one). The library doesn't parse any particular header format itself; there's no single standard, so you read whatever your backend sends.
+- `control.throttleFor(ms)` delays the *next* `acquire()` call(s) by at least `ms` — it composes with `maxConcurrent`/`maxRequestsPerInterval` rather than replacing them, and also applies when a distributed `rateLimit.store` is configured (the throttle wait happens locally, before delegating to the store).
+- A later, shorter `throttleFor()` call doesn't shorten an already-scheduled longer wait — the maximum wins.
+
+---
+
 ## Idempotency keys
 
 Send an `Idempotency-Key` header on mutating requests (POST/PUT/PATCH/DELETE) so a backend that supports idempotency keys (Stripe, PayPal, and plenty of in-house APIs) can safely dedupe retried requests instead of double-applying them. The library only sends the header — deduplication is the backend's job.
@@ -406,6 +516,52 @@ await executor.execute("/orders", { method: "POST", data: { items: ["sku-1"] } }
 ```
 
 `autoIdempotencyKey` only affects mutating methods (POST/PUT/PATCH/DELETE) and only generates a key if the caller didn't already provide one via `idempotencyKey`. See [`examples/idempotent-mutations.ts`](./examples/idempotent-mutations.ts).
+
+---
+
+## Offline queue
+
+Queue mutating requests (POST/PUT/PATCH/DELETE by default) made while offline instead of failing them immediately, and replay them — in order, using the same `Idempotency-Key` on every replay attempt — once connectivity returns:
+
+```js
+import { createRestClient, OfflineQueuedError } from "rest-pipeline-js";
+
+const client = createRestClient({
+  baseURL: "https://api.example.com",
+  offlineQueue: {
+    enabled: true,
+    // Reuses PipelineStateAdapter (see PipelineConfig.options.persistAdapter) —
+    // any save/load pair works, e.g. localStorage in a browser.
+    persistAdapter: {
+      save: (queue) => localStorage.setItem("offline-queue", JSON.stringify(queue)),
+      load: () => JSON.parse(localStorage.getItem("offline-queue") ?? "null"),
+    },
+    onFlushSuccess: (request, response) => console.log("synced", request.url, response.data),
+    onFlushError: (request, error) => console.error("failed permanently", request.url, error),
+  },
+});
+
+try {
+  await client.post("/orders", cart);
+} catch (err) {
+  if (err instanceof OfflineQueuedError) {
+    // Queued, not a network failure — err.queueId correlates with the
+    // eventual onFlushSuccess/onFlushError callback.
+    console.log("Order queued, will sync automatically:", err.queueId);
+  } else {
+    throw err;
+  }
+}
+```
+
+- **`shouldQueue`** — which requests get queued; default is the mutating methods (POST/PUT/PATCH/DELETE). GET is never queued by default (a stale read isn't useful to "replay" later).
+- **`isOnline`**/**`onOnlineChange`** — default to `navigator.onLine` and the browser's `"online"` event. Provide your own for Node/React Native (e.g. React Native's `NetInfo`) — without `onOnlineChange` outside a browser, nothing triggers an automatic flush; call `client.flushQueue()` yourself when you know connectivity is back.
+- **`client.getQueuedRequests()`** — current queue contents, e.g. for a "N actions pending sync" badge.
+- **`client.flushQueue()`** — manually attempt to send everything queued (also happens automatically on reconnect).
+- Each queued request gets an `Idempotency-Key` (reused on every replay attempt, generated once if the caller didn't already set one) — the same mechanism as [Idempotency keys](#idempotency-keys) above, so a backend that honors it won't double-apply a mutation that actually went through right before connectivity dropped.
+- `flush()` attempts each queued request once per call, not a backoff loop — a request that fails with a genuine HTTP error (has a `status`) is removed from the queue and reported via `onFlushError`; one with no `status` at all (indistinguishable from "still offline") is left queued and retried on the next flush. For per-attempt retry/backoff, that's what `RequestExecutor`'s `retry`/`jitterStrategy` are for — a queue flush is a coarser retry cycle triggered by reconnect events, not a tight retry loop against a possibly still-recovering backend.
+
+See [`examples/offline-queue.ts`](./examples/offline-queue.ts) for the full annotated version.
 
 ---
 
@@ -551,6 +707,23 @@ const res = await executor.execute("/data", undefined, 3, 5000, signal);
 ```
 
 When the server returns a `Retry-After` header (numeric seconds or HTTP-date), that delay takes priority over the backoff formula. Values exceeding `maxRetryAfterMs` are clamped to the cap. Timeout is enforced via `AbortController` — the actual HTTP request is cancelled, not just the promise.
+
+### Jitter strategies
+
+`retry.jitterStrategy` controls how randomness is added to the computed backoff delay (it doesn't affect `Retry-After`, which is always used as-is):
+
+- **`"fixed"`** (default) — `delayMs * backoffMultiplier^(attempt-1)` plus up to +10% random jitter on top. Backward compatible; the delay never falls below the pure backoff value.
+- **`"full"`** — `delay = random(0, delayMs * backoffMultiplier^(attempt-1))`. Better at spreading out many concurrent retriers (avoids synchronized retry storms hitting the backend at the same instant), at the cost of individual delays sometimes being much shorter than the nominal backoff.
+- **`"decorrelated"`** — `delay = min(cap, random(delayMs, prevDelay * 3))`, where `prevDelay` starts at `delayMs` and updates after each attempt, and `cap` is `delayMs * backoffMultiplier^attempts`. Spreads out concurrent retriers even better than `"full"` since each client's next delay depends on its own previous one.
+
+Both algorithms are from AWS's [Exponential Backoff and Jitter](https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/) post — use them when many instances of your app may retry against the same backend at once.
+
+```js
+const executor = new RequestExecutor({
+  baseURL: "https://api.example.com",
+  retry: { attempts: 5, delayMs: 200, backoffMultiplier: 2, jitterStrategy: "full" },
+});
+```
 
 ---
 
@@ -1050,6 +1223,47 @@ This works whether or not you keep reassigning the chain (`builder.step(...)` wi
 
 ---
 
+## Schema validation (validateInput / validateOutput)
+
+Each stage can validate (and, since the return value replaces the data, optionally coerce) its input and output with `validateInput`/`validateOutput`. Neither depends on a particular schema library — pass any function `(data) => T`; it should throw on invalid data:
+
+```ts
+import { createRestClient, PipelineOrchestrator } from "rest-pipeline-js";
+import { z } from "zod"; // not a dependency of this package — bring your own
+
+const userSchema = z.object({ id: z.number(), name: z.string() });
+
+const orchestrator = new PipelineOrchestrator({
+  config: {
+    stages: [
+      {
+        key: "fetchUser",
+        request: async ({ sharedData }) => client.get(`/users/${sharedData.userId}`),
+        // Validates the response shape before it's stored as this stage's
+        // result and handed to the next stage as `prev` — catches a backend
+        // contract change at the pipeline boundary instead of downstream.
+        validateOutput: (data) => userSchema.parse((data as { data: unknown }).data),
+      },
+      {
+        key: "greet",
+        validateInput: (data) => userSchema.parse(data),
+        request: async ({ prev }) => `Hello, ${prev.name}!`,
+      },
+    ],
+  },
+});
+```
+
+- `validateInput` runs after the `before` hook (sees its result), right before `request` — so it can validate/coerce the value `request` is about to receive as `prev`.
+- `validateOutput` runs after the `after` hook (sees its result), right before the step is committed as successful — so it validates/coerces the actual value that becomes this stage's `data` and the next stage's `prev`.
+- Both receive `(data, { allResults, sharedData, signal })`, matching the other stage hooks.
+- A thrown error goes through the exact same path as any other stage error — `errorHandler` can inspect it and return `recoverStep(fallbackValue)` to recover, same as a failed `request`.
+- Both also apply to stages inside a `ParallelStageGroup` (they share the same execution path as top-level stages).
+
+See [`examples/zod-validation.ts`](./examples/zod-validation.ts) for a full `withZodSchema()` adapter helper.
+
+---
+
 ## validatePipelineConfig()
 
 Catch configuration errors before runtime:
@@ -1176,6 +1390,74 @@ const orchestrator = createPipeline([
 - Respects `abort()` — checks the abort signal between each chunk.
 - Supports `continueOnError` — failed stream stages can be skipped like any other step.
 - Emits standard step events: `step:start`, `step:success`, `step:error`.
+
+---
+
+## Pagination
+
+`paginate()` iterates a paginated API's pages as an `AsyncGenerator<T[]>`, hiding the difference between cursor-based and offset/limit-based APIs:
+
+```ts
+import { paginate, paginateAll, flattenPages } from "rest-pipeline-js";
+
+// Cursor-based (default strategy)
+for await (const page of paginate({
+  fetchPage: (cursor) => client.get("/items", { params: { cursor } }).then((r) => r.data),
+})) {
+  console.log(page.length, "items");
+}
+
+// Offset/limit-based
+for await (const page of paginate({
+  strategy: "offset",
+  limit: 50,
+  fetchPage: (offset, limit) =>
+    client.get("/items", { params: { offset, limit } }).then((r) => r.data),
+})) {
+  console.log(page.length, "items");
+}
+```
+
+`fetchPage` returns `{ items, nextCursor }` (cursor strategy — stop when `nextCursor` is `null`/`undefined`) or `{ items, total? }` (offset strategy — stops when a page is shorter than `limit`, or `offset` reaches `total` if the API reports one).
+
+- **`paginateAll(options)`** — collects every page into one flat array; simplest option when the total dataset is small enough to hold in memory at once.
+- **`flattenPages(pages)`** — turns a stream of pages into a stream of individual items; useful as a `StreamStageConfig.stream` source when `onChunk` should fire per item rather than per page (see [`examples/pagination-stream.ts`](./examples/pagination-stream.ts)).
+- Both `paginate()` and its `fetchPage` callback accept an optional `signal` for `abort()` support.
+
+See [`examples/pagination-fanout.ts`](./examples/pagination-fanout.ts) instead if you know the page count upfront and want to fetch them concurrently rather than sequentially.
+
+---
+
+## WebSocket stages
+
+A stage that runs over a persistent WebSocket connection instead of a single request/response — chat/presence feeds, live order books, collaborative editing events, etc. Messages returned by `onMessage` are collected into the stage's `data` array (same pattern as stream stages' chunks); `onChunk` fires per message in real time.
+
+```js
+const orchestrator = pipe()
+  .step({ key: "auth", request: async () => getToken() })
+  .websocket({
+    key: "chatFeed",
+    url: ({ prev }) => `wss://chat.example.com/rooms/general?token=${prev}`,
+    onOpen: () => console.log("connected"),
+    onMessage: (data) => JSON.parse(data),
+    onChunk: (message, sharedData) => updateUI(message),
+    closeOn: (message) => message.text === "__end__",
+    onClose: ({ wasClean }) => console.log("closed, clean:", wasClean),
+    onError: (error) => console.error(error),
+    timeoutMs: 5 * 60_000,
+  })
+  .build();
+```
+
+- **`url`** — string or a function of `{ prev, allResults, sharedData, signal }`, same params `request` gets.
+- **`createWebSocket`** — factory for the underlying implementation. Defaults to `globalThis.WebSocket` (browsers, Deno, Node ≥22). For Node <22, pass one backed by the [`ws`](https://www.npmjs.com/package/ws) package: `createWebSocket: (url, protocols) => new WS(url, protocols)`.
+- **`onMessage`** (required) — called per message with `event.data`; can be `async`. A non-`undefined` return value is collected into the stage's result array and passed to `onChunk`.
+- **Success/error is decided by the close event**, not the error event: most WebSocket implementations fire `error` immediately before `close`, so `onError` alone doesn't fail the stage — a clean close (`wasClean: true`) resolves the stage successfully with everything collected so far; an unclean close rejects it, going through `continueOnError` like any other stage.
+- **`closeOn(data)`** — return `true` to close the connection and end the stage successfully once you've seen what you need, instead of waiting for the server to close it.
+- **`timeoutMs`** — overall connection timeout (not reset by messages); closes the socket and fails the stage if it fires before a clean close happens on its own.
+- Respects `abort()` — closes the underlying connection and rejects the stage.
+
+See [`examples/websocket-stage.ts`](./examples/websocket-stage.ts) for the full annotated version.
 
 ---
 
@@ -1327,13 +1609,59 @@ Hooks (import from `rest-pipeline-js/react`):
 
 ---
 
+## Testing
+
+`createMockAdapter()` (from the separate `rest-pipeline-js/testing` entry point, so it never ships in a production bundle) replaces the network with a set of route definitions — for testing code that uses `createRestClient()` or `PipelineOrchestrator` without hitting a real backend:
+
+```ts
+import { createRestClient } from "rest-pipeline-js";
+import { createMockAdapter } from "rest-pipeline-js/testing";
+
+const adapter = createMockAdapter([
+  { method: "GET", url: "/users/1", respond: { data: { id: 1, name: "Ada" } } },
+
+  // Dynamic response — reads the request to build the reply
+  {
+    method: "POST",
+    url: "/orders",
+    respond: (info) => ({ data: { id: 42, ...(info.data as object) }, status: 201 }),
+  },
+
+  // Sequence of responses, one per matching call — exercise retry logic:
+  // first two attempts fail, third succeeds. Repeats the last entry once exhausted.
+  {
+    method: "GET",
+    url: "/flaky",
+    respond: [{ error: true, status: 503 }, { error: true, status: 503 }, { data: { ok: true } }],
+  },
+]);
+
+const client = createRestClient({ baseURL: "https://api.example.com", adapter });
+
+const user = await client.get("/users/1");
+// adapter.calls — history of every request handled, in order; assert on it in your tests
+expect(adapter.calls).toHaveLength(1);
+```
+
+- `url` matches by substring (`string`) or `.test()` (`RegExp`) against the *relative* URL (`config.url`, e.g. `/users/1`), not the full URL. Omit `method` to match any method.
+- A response with `status >= 400` rejects by default (matching what axios/fetch do), thrown as `Error` with `.status` and `.response.status`/`.response.data`/`.response.headers` set — enough for `retry.retriableStatus`, `circuitBreaker`, and error interceptors to work against. Override with an explicit `error: true`/`false` on the response spec.
+- `delayMs` on a response simulates network latency with a real `setTimeout` (works fine under `vi.useFakeTimers()`/similar).
+- No route matching a request throws immediately with a clear message, instead of hanging — a test with a missing route setup fails loudly.
+- `adapter.reset()` clears `calls` and rewinds any array-`respond` sequences back to their start, without touching the routes themselves.
+
+See [`examples/mock-adapter.ts`](./examples/mock-adapter.ts) for a fuller example, including use with `PipelineOrchestrator` via `httpConfig`.
+
+---
+
 ## Entry points
 
-| Entry point              | Use for        | Contents                                                                    |
-| ------------------------ | -------------- | --------------------------------------------------------------------------- |
-| `rest-pipeline-js`       | Core only      | `PipelineOrchestrator`, `createRestClient`, types, utilities. No Vue/React. |
-| `rest-pipeline-js/vue`   | Vue projects   | Core + Vue composables                                                      |
-| `rest-pipeline-js/react` | React projects | Core + React hooks                                                          |
+| Entry point                | Use for              | Contents                                                                    |
+| --------------------------- | --------------------- | --------------------------------------------------------------------------- |
+| `rest-pipeline-js`         | Core only             | `PipelineOrchestrator`, `createRestClient`, types, utilities. No Vue/React. |
+| `rest-pipeline-js/vue`     | Vue projects          | Core + Vue composables                                                      |
+| `rest-pipeline-js/react`   | React projects        | Core + React hooks                                                          |
+| `rest-pipeline-js/testing` | Tests (any framework) | `createMockAdapter()` — see [Testing](#testing)                            |
+| `dist/umd/rest-pipeline.umd.min.js` | CDN `<script>` tag, no bundler | Core, with `axios` bundled in — see [CDN usage](#cdn-usage)   |
 
 ```js
 // Core only
@@ -1347,6 +1675,9 @@ import {
   PipelineOrchestrator,
   usePipelineRunReact,
 } from "rest-pipeline-js/react";
+
+// Testing (any framework — not bundled into the core entry point)
+import { createMockAdapter } from "rest-pipeline-js/testing";
 ```
 
 `sideEffects: false` — unused entry points are tree-shaken. `react` / `react-dom` are `peerDependencies`.
@@ -1366,11 +1697,12 @@ rest-pipeline-js
 │     ├── AuthProvider         — Bearer injection; 401 refresh + one retry; optional tokenTtlMs cache
 │     ├── MetricsCollector     — onRequestStart / onRequestEnd callbacks
 │     ├── HeaderSanitizer      — masks sensitive headers before metrics callbacks
+│     ├── OfflineQueue         — queues mutating requests while offline, replays on reconnect
 │     └── HttpAdapter          — pluggable transport (default: axios; swap for fetch / edge)
 │
 ├── PipelineOrchestrator (config, httpConfig?, sharedData?, options?)
 │     ├── StageRunner          — sequential execution loop; parallel via Promise.all
-│     │     condition → pauseBefore → before → request → after → pauseAfter
+│     │     condition → pauseBefore → before → validateInput → request → after → validateOutput → pauseAfter
 │     ├── MiddlewareRunner     — beforeEach / afterEach / onError across all stages
 │     ├── EventBus             — on() / emit(); step:start|success|error|skipped|progress, log
 │     ├── ProgressTracker      — subscribeProgress / subscribeStageResults / getProgress
@@ -1382,7 +1714,7 @@ rest-pipeline-js
 │     └── PluginManager        — install() + destroy() lifecycle
 │
 ├── PipelineBuilder (pipe())
-│     .step() / .parallel() / .subPipeline() / .stream() → .build() / .toConfig()
+│     .step() / .parallel() / .subPipeline() / .stream() / .websocket() → .build() / .toConfig()
 │
 ├── createPipeline()           — short factory wrapping new PipelineOrchestrator()
 │
@@ -1392,22 +1724,26 @@ rest-pipeline-js
 │     usePipelineRunVue / usePipelineProgressVue / usePipelineLogsVue
 │     usePipelineStepEventVue / useRestClientVue / usePipelineStageResultVue
 │
-└── /react (separate entry point)
-      usePipelineRunReact / usePipelineProgressReact / usePipelineLogsReact
-      usePipelineStepEventReact / useRestClientReact / usePipelineStageResultReact
+├── /react (separate entry point)
+│     usePipelineRunReact / usePipelineProgressReact / usePipelineLogsReact
+│     usePipelineStepEventReact / useRestClientReact / usePipelineStageResultReact
+│
+└── /testing (separate entry point)
+      createMockAdapter()   — HttpAdapter backed by route definitions, no network
 ```
 
 ---
 
 ## Bundle size & peer dependencies
 
-| Entry point              | Peer deps                    | Notes                                                            |
-| ------------------------ | ---------------------------- | ---------------------------------------------------------------- |
-| `rest-pipeline-js`       | —                            | Core — orchestrator, HTTP client, utilities. Depends on `axios`. |
-| `rest-pipeline-js/vue`   | `vue ^3.3`                   | Core + Vue composables                                           |
-| `rest-pipeline-js/react` | `react ^19`, `react-dom ^19` | Core + React hooks                                               |
+| Entry point                | Peer deps                    | Notes                                                            |
+| --------------------------- | ---------------------------- | ---------------------------------------------------------------- |
+| `rest-pipeline-js`         | —                            | Core — orchestrator, HTTP client, utilities. Depends on `axios`. |
+| `rest-pipeline-js/vue`     | `vue ^3.3`                   | Core + Vue composables                                           |
+| `rest-pipeline-js/react`   | `react ^19`, `react-dom ^19` | Core + React hooks                                               |
+| `rest-pipeline-js/testing` | —                            | `createMockAdapter()` only — doesn't bundle the core client      |
 
-The package ships as tree-shakeable ESM (`dist/esm/`) and CommonJS (`dist/cjs/`), each with its own `package.json` (`{"type":"module"}` / `{"type":"commonjs"}`) so Node's native ESM resolver can load it directly — not just bundlers. The `/vue` and `/react` entry points are code-split — importing one does not bundle the other. Size is enforced in CI (see below); current brotli size per entry point is ~23 KB with all dependencies (`axios` for core; `vue`/`react` are peer deps, excluded).
+The package ships as tree-shakeable ESM (`dist/esm/`) and CommonJS (`dist/cjs/`), each with its own `package.json` (`{"type":"module"}` / `{"type":"commonjs"}`) so Node's native ESM resolver can load it directly — not just bundlers. Every entry point is code-split — importing one does not bundle the others. Size is enforced in CI (see below); current brotli size is ~25 KB for the core/`/vue`/`/react` entry points (with all dependencies — `axios` for core; `vue`/`react` are peer deps, excluded) and well under 1 KB for `/testing`.
 
 ---
 

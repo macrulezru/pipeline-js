@@ -1,13 +1,13 @@
-import { PipelineOrchestrator } from "../src/pipeline-orchestrator";
+import { PipelineOrchestrator } from "../src/pipeline/pipeline-orchestrator";
 import { recoverStep } from "../src/types";
 import type { PipelineConfig } from "../src/types";
 
 const httpConfig = { baseURL: "http://localhost" };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Базовые тесты (регрессия)
+// Basic tests (regression)
 // ─────────────────────────────────────────────────────────────────────────────
-describe("PipelineOrchestrator — базовое выполнение", () => {
+describe("PipelineOrchestrator — basic execution", () => {
   const pipelineConfig: PipelineConfig = {
     stages: [
       { key: "step1", request: async () => ({ v: "ok1" }) },
@@ -18,7 +18,7 @@ describe("PipelineOrchestrator — базовое выполнение", () => {
     ],
   };
 
-  it("run() — успешное последовательное выполнение", async () => {
+  it("run() — successful sequential execution", async () => {
     const o = new PipelineOrchestrator({ config: pipelineConfig, httpConfig });
     const result = await o.run();
     expect(result.success).toBe(true);
@@ -26,7 +26,7 @@ describe("PipelineOrchestrator — базовое выполнение", () => {
     expect(result.stageResults.step2.data).toEqual({ v: "ok1-ok2" });
   });
 
-  it("subscribeProgress() — получает обновления прогресса", async () => {
+  it("subscribeProgress() — receives progress updates", async () => {
     const o = new PipelineOrchestrator({ config: pipelineConfig, httpConfig });
     const updates: any[] = [];
     o.subscribeProgress((p) => updates.push(p));
@@ -35,7 +35,7 @@ describe("PipelineOrchestrator — базовое выполнение", () => {
     expect(updates[0]).toHaveProperty("currentStage");
   });
 
-  it("subscribeStageResults() — получает результаты шагов", async () => {
+  it("subscribeStageResults() — receives stage results", async () => {
     const o = new PipelineOrchestrator({ config: pipelineConfig, httpConfig });
     const snapshots: any[] = [];
     o.subscribeStageResults((r) => snapshots.push(r));
@@ -46,7 +46,7 @@ describe("PipelineOrchestrator — базовое выполнение", () => {
     });
   });
 
-  it("on() — обрабатывает пользовательские события", async () => {
+  it("on() — handles custom events", async () => {
     const o = new PipelineOrchestrator({ config: pipelineConfig, httpConfig });
     let called = false;
     o.on("step:step1:success", () => {
@@ -56,7 +56,7 @@ describe("PipelineOrchestrator — базовое выполнение", () => {
     expect(called).toBe(true);
   });
 
-  it("getLogs() — возвращает логи", async () => {
+  it("getLogs() — returns logs", async () => {
     const o = new PipelineOrchestrator({ config: pipelineConfig, httpConfig });
     await o.run();
     const logs = o.getLogs();
@@ -64,18 +64,18 @@ describe("PipelineOrchestrator — базовое выполнение", () => {
     expect(logs.length).toBeGreaterThan(0);
   });
 
-  it("getProgress() и getProgressRef() — возвращают снимки (не живую ссылку)", async () => {
+  it("getProgress() and getProgressRef() — return snapshots (not a live reference)", async () => {
     const o = new PipelineOrchestrator({ config: pipelineConfig, httpConfig });
     await o.run();
     const p = o.getProgress();
     const ref = o.getProgressRef();
     expect(p).toHaveProperty("currentStage");
     expect(ref).toHaveProperty("currentStage");
-    // Bug #12 fix: getProgressRef() должен возвращать копию, не мутабельную ссылку
+    // Bug #12 fix: getProgressRef() should return a copy, not a mutable reference
     expect(ref).not.toBe((o as any).progress.progress);
   });
 
-  it("clearStageResults() — сбрасывает результаты и прогресс", async () => {
+  it("clearStageResults() — resets results and progress", async () => {
     const o = new PipelineOrchestrator({ config: pipelineConfig, httpConfig });
     await o.run();
     o.clearStageResults();
@@ -89,7 +89,7 @@ describe("PipelineOrchestrator — базовое выполнение", () => {
 // Bug #1: condition
 // ─────────────────────────────────────────────────────────────────────────────
 describe("Bug #1 fix — condition", () => {
-  it("пропускает шаг со статусом 'skipped' когда condition возвращает false", async () => {
+  it("skips a step with status 'skipped' when condition returns false", async () => {
     const config: PipelineConfig = {
       stages: [
         { key: "step1", request: async () => 42 },
@@ -97,7 +97,7 @@ describe("Bug #1 fix — condition", () => {
           key: "step2",
           condition: () => false,
           request: async () => {
-            throw new Error("не должно вызываться");
+            throw new Error("should not be called");
           },
         },
         { key: "step3", request: async () => 99 },
@@ -110,7 +110,7 @@ describe("Bug #1 fix — condition", () => {
     expect(result.stageResults.step3.data).toBe(99);
   });
 
-  it("выполняет шаг когда condition возвращает true", async () => {
+  it("executes a step when condition returns true", async () => {
     const config: PipelineConfig = {
       stages: [{ key: "step1", request: async () => 1, condition: () => true }],
     };
@@ -120,7 +120,7 @@ describe("Bug #1 fix — condition", () => {
     expect(result.stageResults.step1.data).toBe(1);
   });
 
-  it("condition получает prev и allResults", async () => {
+  it("condition receives prev and allResults", async () => {
     let capturedPrev: any;
     const config: PipelineConfig = {
       stages: [
@@ -140,7 +140,7 @@ describe("Bug #1 fix — condition", () => {
     expect(capturedPrev).toBe("hello");
   });
 
-  it("emituje событие step:key:skipped", async () => {
+  it("emits the step:key:skipped event", async () => {
     const config: PipelineConfig = {
       stages: [
         { key: "step1", condition: () => false, request: async () => 1 },
@@ -158,10 +158,10 @@ describe("Bug #1 fix — condition", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Bug #2: request() вызывается один раз
+// Bug #2: request() is called exactly once
 // ─────────────────────────────────────────────────────────────────────────────
-describe("Bug #2 fix — request() вызывается ровно один раз", () => {
-  it("не вызывает request() дважды (нет двойных побочных эффектов)", async () => {
+describe("Bug #2 fix — request() is called exactly once", () => {
+  it("does not call request() twice (no duplicate side effects)", async () => {
     let callCount = 0;
     const config: PipelineConfig = {
       stages: [
@@ -182,10 +182,10 @@ describe("Bug #2 fix — request() вызывается ровно один ра
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Bug #3: rerunStep вызывает before/after хуки
+// Bug #3: rerunStep calls before/after hooks
 // ─────────────────────────────────────────────────────────────────────────────
-describe("Bug #3 fix — rerunStep() вызывает before/after хуки", () => {
-  it("before хук вызывается при rerunStep", async () => {
+describe("Bug #3 fix — rerunStep() calls before/after hooks", () => {
+  it("before hook is called on rerunStep", async () => {
     let beforeCalled = false;
     const config: PipelineConfig = {
       stages: [
@@ -200,13 +200,13 @@ describe("Bug #3 fix — rerunStep() вызывает before/after хуки", ()
     };
     const o = new PipelineOrchestrator({ config, httpConfig });
     await o.run();
-    beforeCalled = false; // сбрасываем флаг
+    beforeCalled = false; // reset the flag
 
     await o.rerunStep("step1");
     expect(beforeCalled).toBe(true);
   });
 
-  it("after хук вызывается при rerunStep и трансформирует результат", async () => {
+  it("after hook is called on rerunStep and transforms the result", async () => {
     const config: PipelineConfig = {
       stages: [
         {
@@ -222,7 +222,7 @@ describe("Bug #3 fix — rerunStep() вызывает before/after хуки", ()
     expect(res?.data).toBe(20);
   });
 
-  it("condition проверяется при rerunStep", async () => {
+  it("condition is checked on rerunStep", async () => {
     let shouldRun = true;
     const config: PipelineConfig = {
       stages: [
@@ -243,10 +243,10 @@ describe("Bug #3 fix — rerunStep() вызывает before/after хуки", ()
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Bug #5: нет двойного emit событий
+// Bug #5: no duplicate event emit
 // ─────────────────────────────────────────────────────────────────────────────
-describe("Bug #5 fix — нет двойного emit при rerunStep", () => {
-  it("step:success эмитируется ровно один раз при rerunStep", async () => {
+describe("Bug #5 fix — no duplicate emit on rerunStep", () => {
+  it("step:success is emitted exactly once on rerunStep", async () => {
     const config: PipelineConfig = {
       stages: [{ key: "step1", request: async () => 1 }],
     };
@@ -261,7 +261,7 @@ describe("Bug #5 fix — нет двойного emit при rerunStep", () => {
     expect(successCount).toBe(1);
   });
 
-  it("step:start эмитируется ровно один раз при rerunStep", async () => {
+  it("step:start is emitted exactly once on rerunStep", async () => {
     const config: PipelineConfig = {
       stages: [{ key: "step1", request: async () => 1 }],
     };
@@ -278,10 +278,10 @@ describe("Bug #5 fix — нет двойного emit при rerunStep", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Bug #11: autoReset очищает логи
+// Bug #11: autoReset clears logs
 // ─────────────────────────────────────────────────────────────────────────────
-describe("Bug #11 fix — autoReset очищает логи", () => {
-  it("логи очищаются между запусками когда autoReset=true", async () => {
+describe("Bug #11 fix — autoReset clears logs", () => {
+  it("logs are cleared between runs when autoReset=true", async () => {
     const config: PipelineConfig = {
       stages: [{ key: "step1", request: async () => 1 }],
     };
@@ -296,11 +296,11 @@ describe("Bug #11 fix — autoReset очищает логи", () => {
 
     await o.run();
     const logsAfterSecond = o.getLogs();
-    // Логи должны быть такими же по количеству, не накапливаться
+    // Logs should have the same count, not accumulate
     expect(logsAfterSecond.length).toBe(logsAfterFirst.length);
   });
 
-  it("без autoReset логи накапливаются", async () => {
+  it("without autoReset logs accumulate", async () => {
     const config: PipelineConfig = {
       stages: [{ key: "step1", request: async () => 1 }],
     };
@@ -311,7 +311,7 @@ describe("Bug #11 fix — autoReset очищает логи", () => {
     expect(o.getLogs().length).toBeGreaterThan(countAfterFirst);
   });
 
-  it("options.maxLogs ограничивает размер лога (FIFO)", async () => {
+  it("options.maxLogs limits the log size (FIFO)", async () => {
     const config: PipelineConfig = {
       stages: [{ key: "step1", request: async () => 1 }],
       options: { maxLogs: 3 },
@@ -322,26 +322,26 @@ describe("Bug #11 fix — autoReset очищает логи", () => {
     await o.run();
     const logs = o.getLogs();
     expect(logs.length).toBe(3);
-    // Хранятся самые свежие записи — последняя должна быть про последний run
+    // The most recent entries are kept — the last one should be about the last run
     expect(logs[logs.length - 1].message).toContain("step1");
   });
 
-  it("без maxLogs лог не ограничен (обратная совместимость)", async () => {
+  it("without maxLogs the log is unbounded (backward compatibility)", async () => {
     const config: PipelineConfig = {
       stages: [{ key: "step1", request: async () => 1 }],
     };
     const o = new PipelineOrchestrator({ config, httpConfig });
     for (let i = 0; i < 5; i++) await o.run();
-    // 5 запусков × 2 записи ("start" + "success") = 10, ничего не отброшено
+    // 5 runs × 2 entries ("start" + "success") = 10, nothing dropped
     expect(o.getLogs().length).toBe(10);
   });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// before/after хуки (run)
+// before/after hooks (run)
 // ─────────────────────────────────────────────────────────────────────────────
-describe("before/after хуки", () => {
-  it("before модифицирует входные данные для request", async () => {
+describe("before/after hooks", () => {
+  it("before modifies the input data for request", async () => {
     const config: PipelineConfig = {
       stages: [
         { key: "step1", request: async () => 10 },
@@ -354,11 +354,11 @@ describe("before/after хуки", () => {
     };
     const o = new PipelineOrchestrator({ config, httpConfig });
     const result = await o.run();
-    // before делает prev 10+5=15, request 15*2=30
+    // before makes prev 10+5=15, request 15*2=30
     expect(result.stageResults.step2.data).toBe(30);
   });
 
-  it("after трансформирует результат шага", async () => {
+  it("after transforms the step result", async () => {
     const config: PipelineConfig = {
       stages: [
         {
@@ -375,10 +375,173 @@ describe("before/after хуки", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// validateInput / validateOutput
+// ─────────────────────────────────────────────────────────────────────────────
+describe("validateInput / validateOutput", () => {
+  it("validateInput sees the before-hook result and can transform the value before request", async () => {
+    const seen: unknown[] = [];
+    const config: PipelineConfig = {
+      stages: [
+        { key: "step1", request: async () => 10 },
+        {
+          key: "step2",
+          before: async ({ prev }) => (prev as number) + 5, // 10 → 15
+          validateInput: (data) => {
+            seen.push(data);
+            return (data as number) * 2; // 15 → 30
+          },
+          request: async ({ prev }) => prev, // sees the already validated/transformed value
+        },
+      ],
+    };
+    const o = new PipelineOrchestrator({ config, httpConfig });
+    const result = await o.run();
+
+    expect(seen).toEqual([15]);
+    expect(result.stageResults.step2.data).toBe(30);
+  });
+
+  it("validateInput throws an error → request is not called, error is handled as a regular step error", async () => {
+    let requestCalled = false;
+    const config: PipelineConfig = {
+      stages: [
+        {
+          key: "step1",
+          validateInput: () => {
+            throw new Error("invalid input");
+          },
+          request: async () => {
+            requestCalled = true;
+            return "unreachable";
+          },
+        },
+      ],
+    };
+    const o = new PipelineOrchestrator({ config, httpConfig });
+    const result = await o.run();
+
+    expect(requestCalled).toBe(false);
+    expect(result.success).toBe(false);
+    expect(result.stageResults.step1.status).toBe("error");
+  });
+
+  it("validateOutput sees the result after the after-hook and can transform the final value", async () => {
+    const seen: unknown[] = [];
+    const config: PipelineConfig = {
+      stages: [
+        {
+          key: "step1",
+          request: async () => [1, 2, 3],
+          after: async ({ result }) => (result as number[]).map((x) => x * 10), // [10,20,30]
+          validateOutput: (data) => {
+            seen.push(data);
+            return (data as number[]).length; // replace with the array length
+          },
+        },
+      ],
+    };
+    const o = new PipelineOrchestrator({ config, httpConfig });
+    const result = await o.run();
+
+    expect(seen).toEqual([[10, 20, 30]]);
+    expect(result.stageResults.step1.data).toBe(3);
+  });
+
+  it("validateOutput throws an error → step is marked error, but the stepResult before it is not committed", async () => {
+    const config: PipelineConfig = {
+      stages: [
+        {
+          key: "step1",
+          request: async () => ({ ok: true }),
+          validateOutput: () => {
+            throw new Error("schema mismatch");
+          },
+        },
+      ],
+    };
+    const o = new PipelineOrchestrator({ config, httpConfig });
+    const result = await o.run();
+
+    expect(result.success).toBe(false);
+    expect(result.stageResults.step1.status).toBe("error");
+  });
+
+  it("errorHandler + recoverStep recovers the step after a validateOutput error", async () => {
+    const config: PipelineConfig = {
+      stages: [
+        {
+          key: "step1",
+          request: async () => "bad-data",
+          validateOutput: (data) => {
+            if (data === "bad-data") throw new Error("invalid");
+            return data;
+          },
+          errorHandler: () => recoverStep("fallback-value"),
+        },
+      ],
+    };
+    const o = new PipelineOrchestrator({ config, httpConfig });
+    const result = await o.run();
+
+    expect(result.success).toBe(true);
+    expect(result.stageResults.step1.status).toBe("success");
+    expect(result.stageResults.step1.data).toBe("fallback-value");
+  });
+
+  it("also applies to stages inside a ParallelStageGroup (uses the same executeStage)", async () => {
+    const config: PipelineConfig = {
+      stages: [
+        {
+          parallel: [
+            {
+              key: "a",
+              request: async () => 1,
+              validateOutput: (data) => (data as number) + 100,
+            },
+            { key: "b", request: async () => 2 },
+          ],
+        },
+      ],
+    };
+    const o = new PipelineOrchestrator({ config, httpConfig });
+    const result = await o.run();
+
+    expect(result.stageResults.a.data).toBe(101);
+    expect(result.stageResults.b.data).toBe(2);
+  });
+
+  it("validateInput/validateOutput receive signal, sharedData and allResults in ctx", async () => {
+    let capturedCtx: any;
+    const config: PipelineConfig = {
+      stages: [
+        {
+          key: "step1",
+          request: async () => 1,
+          validateOutput: (data, ctx) => {
+            capturedCtx = ctx;
+            return data;
+          },
+        },
+      ],
+    };
+    const o = new PipelineOrchestrator({
+      config,
+      httpConfig,
+      sharedData: { foo: "bar" },
+    });
+    await o.run();
+
+    expect(capturedCtx.sharedData).toEqual({ foo: "bar" });
+    expect(capturedCtx.signal).toBeInstanceOf(AbortSignal);
+    expect(capturedCtx.allResults).toBeDefined();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Abort
 // ─────────────────────────────────────────────────────────────────────────────
 describe("abort()", () => {
-  it("abort() прерывает выполнение pipeline", async () => {
+  it("abort() interrupts pipeline execution", async () => {
     const config: PipelineConfig = {
       stages: [
         {
@@ -398,7 +561,7 @@ describe("abort()", () => {
     expect(result.success).toBe(false);
   });
 
-  it("isAborted() возвращает false до abort()", () => {
+  it("isAborted() returns false before abort()", () => {
     const config: PipelineConfig = { stages: [] };
     const o = new PipelineOrchestrator({ config, httpConfig });
     expect(o.isAborted()).toBe(false);
@@ -409,7 +572,7 @@ describe("abort()", () => {
 // rerunStep
 // ─────────────────────────────────────────────────────────────────────────────
 describe("rerunStep()", () => {
-  it("повторно выполняет один шаг", async () => {
+  it("re-executes a single step", async () => {
     const config: PipelineConfig = {
       stages: [
         { key: "step1", request: async () => ({ v: "ok1" }) },
@@ -426,14 +589,14 @@ describe("rerunStep()", () => {
     expect(res?.data).toEqual({ v: "ok1-ok2" });
   });
 
-  it("возвращает undefined для несуществующего ключа", async () => {
+  it("returns undefined for a non-existent key", async () => {
     const config: PipelineConfig = { stages: [] };
     const o = new PipelineOrchestrator({ config, httpConfig });
     const res = await o.rerunStep("nonexistent");
     expect(res).toBeUndefined();
   });
 
-  it("находит шаг внутри параллельной группы", async () => {
+  it("finds a step inside a parallel group", async () => {
     const config: PipelineConfig = {
       stages: [
         {
@@ -454,10 +617,10 @@ describe("rerunStep()", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Параллельные шаги (Feature #13)
+// Parallel steps (Feature #13)
 // ─────────────────────────────────────────────────────────────────────────────
-describe("Параллельные шаги (ParallelStageGroup)", () => {
-  it("выполняет шаги группы параллельно", async () => {
+describe("Parallel steps (ParallelStageGroup)", () => {
+  it("executes the group's steps in parallel", async () => {
     const order: string[] = [];
     const config: PipelineConfig = {
       stages: [
@@ -488,11 +651,11 @@ describe("Параллельные шаги (ParallelStageGroup)", () => {
     expect(result.success).toBe(true);
     expect(result.stageResults.slow.data).toBe("slow");
     expect(result.stageResults.fast.data).toBe("fast");
-    // Быстрый шаг должен завершиться первым
+    // The fast step should finish first
     expect(order[0]).toBe("fast");
   });
 
-  it("pipeline завершается с ошибкой если хотя бы один параллельный шаг упал", async () => {
+  it("pipeline fails if at least one parallel step throws", async () => {
     const config: PipelineConfig = {
       stages: [
         {
@@ -516,7 +679,7 @@ describe("Параллельные шаги (ParallelStageGroup)", () => {
     expect(result.stageResults.ok.status).toBe("success");
   });
 
-  it("последовательные шаги после группы выполняются", async () => {
+  it("sequential steps after the group execute", async () => {
     const config: PipelineConfig = {
       stages: [
         {
@@ -540,7 +703,7 @@ describe("Параллельные шаги (ParallelStageGroup)", () => {
 // Global middleware (Feature #14)
 // ─────────────────────────────────────────────────────────────────────────────
 describe("Global middleware", () => {
-  it("beforeEach вызывается перед каждым шагом", async () => {
+  it("beforeEach is called before every step", async () => {
     const called: string[] = [];
     const config: PipelineConfig = {
       stages: [
@@ -558,7 +721,7 @@ describe("Global middleware", () => {
     expect(called).toEqual(["step1", "step2"]);
   });
 
-  it("afterEach вызывается после каждого успешного шага", async () => {
+  it("afterEach is called after every successful step", async () => {
     const results: any[] = [];
     const config: PipelineConfig = {
       stages: [{ key: "step1", request: async () => 42 }],
@@ -573,7 +736,7 @@ describe("Global middleware", () => {
     expect(results).toEqual([42]);
   });
 
-  it("onError вызывается при ошибке шага", async () => {
+  it("onError is called when a step errors", async () => {
     let errorKey = "";
     const config: PipelineConfig = {
       stages: [
@@ -601,7 +764,7 @@ describe("Global middleware", () => {
 // pause/resume (Feature #15)
 // ─────────────────────────────────────────────────────────────────────────────
 describe("pause() / resume()", () => {
-  it("pipeline ждёт resume() после паузы", async () => {
+  it("pipeline waits for resume() after pausing", async () => {
     const order: string[] = [];
     const config: PipelineConfig = {
       stages: [
@@ -623,11 +786,11 @@ describe("pause() / resume()", () => {
     };
     const o = new PipelineOrchestrator({ config, httpConfig });
 
-    // Паузируем после step1
+    // Pause after step1
     o.on("step:step1:success", () => o.pause());
 
     const runPromise = o.run();
-    // Даём step1 выполниться
+    // Let step1 finish
     await new Promise((r) => setTimeout(r, 20));
 
     expect(o.isPaused()).toBe(true);
@@ -639,7 +802,7 @@ describe("pause() / resume()", () => {
     expect(order).toEqual(["step1", "step2"]);
   });
 
-  it("abort() во время паузы разбудит pipeline и завершит его", async () => {
+  it("abort() during pause wakes up the pipeline and finishes it", async () => {
     const config: PipelineConfig = {
       stages: [
         { key: "step1", request: async () => 1 },
@@ -655,7 +818,7 @@ describe("pause() / resume()", () => {
 
     o.abort();
     await runPromise;
-    // pipeline завершился (не завис)
+    // pipeline finished (did not hang)
     expect(o.isPaused()).toBe(false);
   });
 });
@@ -664,7 +827,7 @@ describe("pause() / resume()", () => {
 // exportState / importState (Feature #16)
 // ─────────────────────────────────────────────────────────────────────────────
 describe("exportState() / importState()", () => {
-  it("экспортирует и восстанавливает stageResults", async () => {
+  it("exports and restores stageResults", async () => {
     const config: PipelineConfig = {
       stages: [
         { key: "step1", request: async () => ({ value: 42 }) },
@@ -687,7 +850,7 @@ describe("exportState() / importState()", () => {
     expect(stageResults.step2.data).toBe("done");
   });
 
-  it("экспортированные логи имеют строковые timestamps", async () => {
+  it("exported logs have string timestamps", async () => {
     const config: PipelineConfig = {
       stages: [{ key: "step1", request: async () => 1 }],
     };
@@ -696,13 +859,13 @@ describe("exportState() / importState()", () => {
 
     const snap = o.exportState();
     expect(typeof snap.logs[0].timestamp).toBe("string");
-    // ISO формат
+    // ISO format
     expect(new Date(snap.logs[0].timestamp).toISOString()).toBe(
       snap.logs[0].timestamp,
     );
   });
 
-  it("importState восстанавливает логи с объектами Date", async () => {
+  it("importState restores logs with Date objects", async () => {
     const config: PipelineConfig = {
       stages: [{ key: "step1", request: async () => 1 }],
     };
@@ -718,10 +881,10 @@ describe("exportState() / importState()", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Обработка ошибок шага
+// Step error handling
 // ─────────────────────────────────────────────────────────────────────────────
-describe("Обработка ошибок", () => {
-  it("errorHandler шага перехватывает ошибку", async () => {
+describe("Error handling", () => {
+  it("the step's errorHandler catches the error", async () => {
     let handled = false;
     const config: PipelineConfig = {
       stages: [
@@ -743,7 +906,7 @@ describe("Обработка ошибок", () => {
     expect(result.stageResults.step1.status).toBe("error");
   });
 
-  it("pipeline останавливается при ошибке без errorHandler", async () => {
+  it("pipeline stops on error without an errorHandler", async () => {
     const config: PipelineConfig = {
       stages: [
         {
@@ -766,7 +929,7 @@ describe("Обработка ошибок", () => {
 // sharedData
 // ─────────────────────────────────────────────────────────────────────────────
 describe("sharedData", () => {
-  it("sharedData доступен всем шагам и можно мутировать", async () => {
+  it("sharedData is accessible to all steps and can be mutated", async () => {
     const config: PipelineConfig = {
       stages: [
         {
@@ -789,10 +952,10 @@ describe("sharedData", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// continueOnError (Категория 1.3)
+// continueOnError (Category 1.3)
 // ─────────────────────────────────────────────────────────────────────────────
 describe("continueOnError", () => {
-  it("глобальный continueOnError — pipeline продолжает выполнение после ошибки", async () => {
+  it("global continueOnError — pipeline continues execution after an error", async () => {
     const config: PipelineConfig = {
       stages: [
         {
@@ -807,13 +970,13 @@ describe("continueOnError", () => {
     };
     const o = new PipelineOrchestrator({ config, httpConfig });
     const result = await o.run();
-    // success не изменился (нет ошибки без continueOnError), но оба шага выполнены
+    // success is unchanged (no error without continueOnError), but both steps ran
     expect(result.stageResults.step1.status).toBe("error");
     expect(result.stageResults.step2.status).toBe("success");
     expect(result.stageResults.step2.data).toBe("done");
   });
 
-  it("локальный continueOnError на шаге — только этот шаг продолжает", async () => {
+  it("local continueOnError on a step — only that step continues", async () => {
     const config: PipelineConfig = {
       stages: [
         {
@@ -832,7 +995,7 @@ describe("continueOnError", () => {
     expect(result.stageResults.step2.status).toBe("success");
   });
 
-  it("без continueOnError — pipeline останавливается при ошибке (поведение по умолчанию)", async () => {
+  it("without continueOnError — pipeline stops on error (default behavior)", async () => {
     const config: PipelineConfig = {
       stages: [
         {
@@ -850,7 +1013,7 @@ describe("continueOnError", () => {
     expect(result.stageResults.step2).toBeUndefined();
   });
 
-  it("continueOnError для параллельной группы", async () => {
+  it("continueOnError for a parallel group", async () => {
     const config: PipelineConfig = {
       stages: [
         {
@@ -878,10 +1041,10 @@ describe("continueOnError", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// pipelineTimeoutMs (Категория 1.5)
+// pipelineTimeoutMs (Category 1.5)
 // ─────────────────────────────────────────────────────────────────────────────
 describe("pipelineTimeoutMs", () => {
-  it("pipeline автоматически прерывается по таймауту", async () => {
+  it("pipeline is automatically aborted on timeout", async () => {
     const config: PipelineConfig = {
       stages: [
         {
@@ -896,11 +1059,11 @@ describe("pipelineTimeoutMs", () => {
     };
     const o = new PipelineOrchestrator({ config, httpConfig });
     const result = await o.run();
-    // Pipeline должен прерваться до завершения (success: false или шаг в error/pending)
+    // The pipeline should abort before completing (success: false or a step in error/pending)
     expect(result.success).toBe(false);
   }, 2000);
 
-  it("pipeline завершается нормально если укладывается в таймаут", async () => {
+  it("pipeline finishes normally if it stays within the timeout", async () => {
     const config: PipelineConfig = {
       stages: [{ key: "fast", request: async () => "quick" }],
       options: { pipelineTimeoutMs: 5000 },
@@ -913,10 +1076,10 @@ describe("pipelineTimeoutMs", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// pipelineRetry (Категория 1.4)
+// pipelineRetry (Category 1.4)
 // ─────────────────────────────────────────────────────────────────────────────
 describe("pipelineRetry", () => {
-  it("pipeline перезапускается при неуспехе", async () => {
+  it("pipeline restarts on failure", async () => {
     let attempt = 0;
     const config: PipelineConfig = {
       stages: [
@@ -939,7 +1102,7 @@ describe("pipelineRetry", () => {
     expect(attempt).toBe(3);
   });
 
-  it("pipeline возвращает failure если исчерпаны все попытки", async () => {
+  it("pipeline returns failure if all attempts are exhausted", async () => {
     let attempts = 0;
     const config: PipelineConfig = {
       stages: [
@@ -958,11 +1121,11 @@ describe("pipelineRetry", () => {
     const o = new PipelineOrchestrator({ config, httpConfig });
     const result = await o.run();
     expect(result.success).toBe(false);
-    // 1 первичный запуск + 2 retry = 3 попытки
+    // 1 initial run + 2 retries = 3 attempts
     expect(attempts).toBe(3);
   });
 
-  it("retryFrom: failed-step — перезапускает только с упавшего шага", async () => {
+  it("retryFrom: failed-step — restarts only from the failed step", async () => {
     const executed: string[] = [];
     let step2Attempts = 0;
     const config: PipelineConfig = {
@@ -991,17 +1154,17 @@ describe("pipelineRetry", () => {
     const o = new PipelineOrchestrator({ config, httpConfig });
     const result = await o.run();
     expect(result.success).toBe(true);
-    // step1 выполнен только 1 раз, step2 выполнен 2 раза
+    // step1 ran only once, step2 ran twice
     expect(executed.filter((k) => k === "step1").length).toBe(1);
     expect(executed.filter((k) => k === "step2").length).toBe(2);
   });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DAG-переходы (next) (Категория 1.1)
+// DAG transitions (next) (Category 1.1)
 // ─────────────────────────────────────────────────────────────────────────────
 describe("DAG next transitions", () => {
-  it("next() пропускает шаги и переходит к указанному ключу", async () => {
+  it("next() skips steps and jumps to the specified key", async () => {
     const executed: string[] = [];
     const config: PipelineConfig = {
       stages: [
@@ -1036,7 +1199,7 @@ describe("DAG next transitions", () => {
     expect(result.stageResults.step2).toBeUndefined();
   });
 
-  it("next() возвращает null — продолжение по порядку", async () => {
+  it("next() returns null — continues in order", async () => {
     const executed: string[] = [];
     const config: PipelineConfig = {
       stages: [
@@ -1063,7 +1226,7 @@ describe("DAG next transitions", () => {
     expect(executed).toEqual(["step1", "step2"]);
   });
 
-  it("next() с несуществующим ключом — pipeline завершается без ошибки", async () => {
+  it("next() with a non-existent key — pipeline finishes without an error", async () => {
     const config: PipelineConfig = {
       stages: [
         {
@@ -1083,29 +1246,29 @@ describe("DAG next transitions", () => {
     expect(result.stageResults.step2).toBeUndefined();
   });
 
-  it("защита от бесконечного цикла через maxSteps", async () => {
+  it("guards against an infinite loop via maxSteps", async () => {
     const config: PipelineConfig = {
       stages: [
         {
           key: "step1",
           request: async () => "loop",
-          next: () => "step1", // всегда переходит к себе → бесконечный цикл
+          next: () => "step1", // always jumps to itself → infinite loop
         },
       ],
       options: { maxSteps: 5 },
     };
     const o = new PipelineOrchestrator({ config, httpConfig });
     const result = await o.run();
-    // pipeline должен завершиться с неуспехом из-за превышения maxSteps
+    // the pipeline should fail because maxSteps was exceeded
     expect(result.success).toBe(false);
   });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Sub-pipeline (Категория 1.2)
+// Sub-pipeline (Category 1.2)
 // ─────────────────────────────────────────────────────────────────────────────
 describe("SubPipeline", () => {
-  it("выполняет вложенный pipeline как шаг", async () => {
+  it("executes a nested pipeline as a step", async () => {
     const config: PipelineConfig = {
       stages: [
         { key: "pre", request: async () => "before" },
@@ -1124,14 +1287,14 @@ describe("SubPipeline", () => {
     expect(result.stageResults.pre.status).toBe("success");
     expect(result.stageResults.sub.status).toBe("success");
     expect(result.stageResults.post.status).toBe("success");
-    // data вложенного шага — это PipelineResult
+    // the nested step's data is a PipelineResult
     expect((result.stageResults.sub.data as any).success).toBe(true);
     expect((result.stageResults.sub.data as any).stageResults.inner1.data).toBe(
       "inner-result",
     );
   });
 
-  it("sub-pipeline с ошибкой останавливает родительский pipeline", async () => {
+  it("a sub-pipeline error stops the parent pipeline", async () => {
     const config: PipelineConfig = {
       stages: [
         {
@@ -1156,7 +1319,7 @@ describe("SubPipeline", () => {
     expect(result.stageResults.post).toBeUndefined();
   });
 
-  it("sub-pipeline с continueOnError — родительский pipeline продолжает", async () => {
+  it("sub-pipeline with continueOnError — the parent pipeline continues", async () => {
     const config: PipelineConfig = {
       stages: [
         {
@@ -1184,13 +1347,13 @@ describe("SubPipeline", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// getStageResults() (Категория 3.2)
+// getStageResults() (Category 3.2)
 // ─────────────────────────────────────────────────────────────────────────────
 // ─────────────────────────────────────────────────────────────────────────────
-// AbortSignal в хуках шага
+// AbortSignal in step hooks
 // ─────────────────────────────────────────────────────────────────────────────
-describe("signal в хуках шага", () => {
-  it("request/before/after/condition получают AbortSignal", async () => {
+describe("signal in step hooks", () => {
+  it("request/before/after/condition receive an AbortSignal", async () => {
     const seen: AbortSignal[] = [];
     const config: PipelineConfig = {
       stages: [
@@ -1218,10 +1381,10 @@ describe("signal в хуках шага", () => {
     await o.run();
     expect(seen.length).toBe(4);
     expect(seen.every((s) => s instanceof AbortSignal)).toBe(true);
-    expect(new Set(seen).size).toBe(1); // один и тот же сигнал во всех хуках
+    expect(new Set(seen).size).toBe(1); // the same signal in every hook
   });
 
-  it("signal.aborted становится true после abort() внутри длительного request", async () => {
+  it("signal.aborted becomes true after abort() inside a long-running request", async () => {
     let abortedSeenInRequest = false;
     const config: PipelineConfig = {
       stages: [
@@ -1241,7 +1404,7 @@ describe("signal в хуках шага", () => {
     expect(abortedSeenInRequest).toBe(true);
   });
 
-  it("errorHandler получает signal", async () => {
+  it("errorHandler receives the signal", async () => {
     let receivedSignal: AbortSignal | undefined;
     const config: PipelineConfig = {
       stages: [
@@ -1267,7 +1430,7 @@ describe("signal в хуках шага", () => {
 // errorHandler recovery (recoverStep)
 // ─────────────────────────────────────────────────────────────────────────────
 describe("errorHandler recovery (recoverStep)", () => {
-  it("errorHandler с recoverStep() восстанавливает шаг как success", async () => {
+  it("errorHandler with recoverStep() recovers the step as success", async () => {
     const config: PipelineConfig = {
       stages: [
         {
@@ -1288,7 +1451,7 @@ describe("errorHandler recovery (recoverStep)", () => {
     expect(result.stageResults.step2.data).toBe("fallback-value-next");
   });
 
-  it("восстановленный шаг эмитирует step:success, а не step:error", async () => {
+  it("a recovered step emits step:success, not step:error", async () => {
     const events: string[] = [];
     const config: PipelineConfig = {
       stages: [
@@ -1308,7 +1471,7 @@ describe("errorHandler recovery (recoverStep)", () => {
     expect(events).toEqual(["success"]);
   });
 
-  it("errorHandler без recover-формы продолжает считать шаг ошибкой (обратная совместимость)", async () => {
+  it("errorHandler without the recover form still treats the step as an error (backward compatibility)", async () => {
     const config: PipelineConfig = {
       stages: [
         {
@@ -1329,10 +1492,10 @@ describe("errorHandler recovery (recoverStep)", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// concurrency limit для ParallelStageGroup
+// concurrency limit for ParallelStageGroup
 // ─────────────────────────────────────────────────────────────────────────────
 describe("ParallelStageGroup.concurrency", () => {
-  it("без concurrency запускает все шаги сразу (как раньше)", async () => {
+  it("without concurrency runs all steps at once (as before)", async () => {
     let maxActive = 0;
     let active = 0;
     const make = (key: string) => ({
@@ -1355,7 +1518,7 @@ describe("ParallelStageGroup.concurrency", () => {
     expect(maxActive).toBe(4);
   });
 
-  it("с concurrency ограничивает число одновременных выполнений", async () => {
+  it("with concurrency limits the number of simultaneous executions", async () => {
     let maxActive = 0;
     let active = 0;
     const make = (key: string) => ({
@@ -1385,7 +1548,7 @@ describe("ParallelStageGroup.concurrency", () => {
     expect(result.stageResults.d.data).toBe("d");
   });
 
-  it("сохраняет порядок результатов независимо от порядка завершения при ограниченной конкурентности", async () => {
+  it("preserves result order regardless of completion order under limited concurrency", async () => {
     const config: PipelineConfig = {
       stages: [
         {
@@ -1406,16 +1569,16 @@ describe("ParallelStageGroup.concurrency", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// runId (трейсинг)
+// runId (tracing)
 // ─────────────────────────────────────────────────────────────────────────────
 describe("runId", () => {
-  it("getRunId() пуст до первого запуска", () => {
+  it("getRunId() is empty before the first run", () => {
     const config: PipelineConfig = { stages: [{ key: "a", request: async () => 1 }] };
     const o = new PipelineOrchestrator({ config, httpConfig });
     expect(o.getRunId()).toBe("");
   });
 
-  it("run() генерирует runId, доступный через getRunId() и в metrics", async () => {
+  it("run() generates a runId available via getRunId() and in metrics", async () => {
     const seenRunIds: string[] = [];
     const config: PipelineConfig = {
       stages: [{ key: "a", request: async () => 1 }],
@@ -1431,7 +1594,7 @@ describe("runId", () => {
     expect(seenRunIds.every((id) => id === o.getRunId())).toBe(true);
   });
 
-  it("разные run() дают разные runId", async () => {
+  it("different run() calls give different runIds", async () => {
     const config: PipelineConfig = { stages: [{ key: "a", request: async () => 1 }] };
     const o = new PipelineOrchestrator({ config, httpConfig });
     await o.run();
@@ -1441,7 +1604,7 @@ describe("runId", () => {
     expect(first).not.toBe(second);
   });
 
-  it("PipelineStepEvent и логи содержат текущий runId", async () => {
+  it("PipelineStepEvent and logs contain the current runId", async () => {
     let eventRunId: string | undefined;
     const config: PipelineConfig = {
       stages: [{ key: "a", request: async () => 1 }],
@@ -1453,7 +1616,7 @@ describe("runId", () => {
     expect(o.getLogs().every((l) => (l as any).runId === o.getRunId())).toBe(true);
   });
 
-  it("rerunStep() генерирует собственный runId, отличный от исходного run()", async () => {
+  it("rerunStep() generates its own runId, different from the original run()", async () => {
     const config: PipelineConfig = { stages: [{ key: "a", request: async () => 1 }] };
     const o = new PipelineOrchestrator({ config, httpConfig });
     await o.run();
@@ -1465,7 +1628,7 @@ describe("runId", () => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 describe("getStageResults()", () => {
-  it("возвращает синхронный снимок результатов", async () => {
+  it("returns a synchronous snapshot of the results", async () => {
     const config: PipelineConfig = {
       stages: [{ key: "step1", request: async () => 42 }],
     };
@@ -1476,7 +1639,7 @@ describe("getStageResults()", () => {
     expect(results.step1.data).toBe(42);
   });
 
-  it("возвращает пустой объект до запуска pipeline", () => {
+  it("returns an empty object before the pipeline runs", () => {
     const config: PipelineConfig = {
       stages: [{ key: "step1", request: async () => 1 }],
     };

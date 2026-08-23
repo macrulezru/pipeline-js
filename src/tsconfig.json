@@ -6,5 +6,13 @@
     "declaration": true,
     "composite": true
   },
-  "include": ["*.ts"]
+  "include": [
+    "*.ts",
+    "types/*.ts",
+    "http/*.ts",
+    "pipeline/*.ts",
+    "pipeline/orchestrator/*.ts",
+    "plugins/vue/*.ts",
+    "plugins/react/*.ts"
+  ]
 }
