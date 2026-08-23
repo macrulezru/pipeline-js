@@ -81,7 +81,8 @@ export function registerCicdRoutes(router: Router): void {
 
   router.get("/api/cicd/builds", async (req, res, _params, url) => {
     await sleep(parseLatencyMs(url));
-    const limit = Math.max(1, Math.min(50, Number(url.searchParams.get("limit") ?? "10")));
+    const limitRaw = Number(url.searchParams.get("limit"));
+    const limit = Math.max(1, Math.min(50, Number.isFinite(limitRaw) ? limitRaw : 10));
     const all = [...builds.values()].sort((a, b) => b.createdAt - a.createdAt);
 
     const offsetParam = url.searchParams.get("offset");
@@ -92,7 +93,15 @@ export function registerCicdRoutes(router: Router): void {
     }
 
     const cursor = url.searchParams.get("cursor");
-    const startIndex = cursor ? all.findIndex((b) => b.id === cursor) + 1 : 0;
+    let startIndex = 0;
+    if (cursor) {
+      const idx = all.findIndex((b) => b.id === cursor);
+      if (idx === -1) {
+        sendJson(res, 400, { error: "Unknown cursor" });
+        return;
+      }
+      startIndex = idx + 1;
+    }
     const slice = all.slice(startIndex, startIndex + limit);
     const nextCursor = startIndex + limit < all.length ? slice[slice.length - 1]?.id ?? null : null;
     sendJson(res, 200, { items: slice.map(toSummary), nextCursor });

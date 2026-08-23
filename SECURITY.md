@@ -5,10 +5,11 @@
 Only the latest published `2.x` version on npm receives security fixes.
 `1.x` is not maintained.
 
-| Version | Supported |
-| ------- | --------- |
-| 2.x     | ✅        |
-| < 2.0   | ❌        |
+| Version         | Supported |
+| --------------- | --------- |
+| Latest 2.x      | ✅        |
+| Older 2.x       | ❌        |
+| < 2.0           | ❌        |
 
 ## Reporting a vulnerability
 

@@ -259,8 +259,10 @@ function loadState() {
     addConsole("No saved state found in localStorage", "warn");
     return;
   }
-  exportedPreview.value = JSON.stringify(JSON.parse(raw), null, 2);
-  addConsole("Restored state preview from localStorage via importState()-compatible JSON", "success");
+  orchestrator.importState(JSON.parse(raw));
+  exportedPreview.value = JSON.stringify(orchestrator.exportState(), null, 2);
+  started.value = true;
+  addConsole("State restored into the orchestrator via importState()", "success");
 }
 
 // ── Circuit breaker sandbox ──────────────────────────────────────

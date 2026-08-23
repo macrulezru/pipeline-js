@@ -33,8 +33,9 @@ async function executeSubPipeline(ctx, stepIndex, item, signal, globalContinueOn
         stepKey: key,
         stepIndex,
     });
+    let subOrchestrator;
     try {
-        const subOrchestrator = new pipeline_orchestrator_js_1.PipelineOrchestrator({
+        subOrchestrator = new pipeline_orchestrator_js_1.PipelineOrchestrator({
             config: item.subPipeline,
             httpConfig: item.httpConfig,
             sharedData: {
@@ -101,5 +102,8 @@ async function executeSubPipeline(ctx, stepIndex, item, signal, globalContinueOn
             error: apiError,
         });
         throw err;
+    }
+    finally {
+        subOrchestrator === null || subOrchestrator === void 0 ? void 0 : subOrchestrator.destroy();
     }
 }

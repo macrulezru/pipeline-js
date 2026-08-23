@@ -47,6 +47,8 @@ async function run() {
   lastResult.value = null;
   addLog(`Placing order — malformed=${malformed.value}, recovery=${recoveryEnabled.value}`);
 
+  let recovered = false;
+
   const orchestrator = createPipeline([
     {
       key: "placeOrder",
@@ -67,24 +69,30 @@ async function run() {
       errorHandler: recoveryEnabled.value
         ? ({ error }: { error: Error }) => {
             addLog(`validateOutput threw — recovering with a fallback fill: ${error.message}`, "warn");
+            recovered = true;
             return recoverStep({ id: "unknown", symbol: "AAPL", qty: 1, side: "buy", price: undefined });
           }
         : undefined,
     },
   ]);
 
-  const result = await orchestrator.run();
-  const stepResult = result.stageResults.placeOrder;
+  try {
+    const result = await orchestrator.run();
+    const stepResult = result.stageResults.placeOrder;
 
-  if (stepResult.status === "success") {
-    const wasRecovered = malformed.value && recoveryEnabled.value;
-    lastResult.value = { status: wasRecovered ? "recovered" : "success", data: stepResult.data as OrderFill };
-    addLog(wasRecovered ? "Step recovered — pipeline continued as success" : "Order filled — validateOutput passed", "success");
-  } else {
-    lastResult.value = { status: "error", error: (stepResult.error as any)?.message ?? "Unknown error" };
-    addLog(`Step failed — validateOutput rejected the response, no recovery configured`, "error");
+    if (stepResult.status === "success") {
+      lastResult.value = { status: recovered ? "recovered" : "success", data: stepResult.data as OrderFill };
+      addLog(recovered ? "Step recovered — pipeline continued as success" : "Order filled — validateOutput passed", "success");
+    } else {
+      lastResult.value = { status: "error", error: (stepResult.error as any)?.message ?? "Unknown error" };
+      addLog(`Step failed — validateOutput rejected the response, no recovery configured`, "error");
+    }
+  } catch (e: any) {
+    lastResult.value = { status: "error", error: e?.message ?? String(e) };
+    addLog(`Run failed: ${e?.message ?? e}`, "error");
+  } finally {
+    running.value = false;
   }
-  running.value = false;
 }
 
 const showCode = ref(false);

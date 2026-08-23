@@ -71,9 +71,17 @@ export class RateLimiter {
     }
 
     await this.waitForWindow();
-    await this.waitForSlot();
-    this.activeCount++;
-    this.windowTimestamps.push(Date.now());
+
+    const max = this.config.maxConcurrent;
+    if (max && this.activeCount >= max) {
+      // Must wait — drainQueue() reserves (increments activeCount for) this
+      // waiter itself before waking it, so we must NOT increment again here.
+      await new Promise<void>((resolve) => {
+        this.waitQueue.push(resolve);
+      });
+    } else {
+      this.activeCount++;
+    }
 
     return () => {
       this.activeCount--;
@@ -90,10 +98,15 @@ export class RateLimiter {
       // Fixed-window counter: loop until we're within the limit.
       // "Extra" increments naturally decay as the window TTL expires on the
       // store side — no busy-loop occurs, thanks to sleep(intervalMs).
+      // Bounded by a deadline so heavy cross-instance contention can't wait
+      // forever — after it, proceed anyway (fail-open, same trade-off as
+      // the get+compute+set fallback documented on CircuitBreakerStore).
+      const deadline = Date.now() + Math.max(intervalMs * 10, 30_000);
       // eslint-disable-next-line no-constant-condition
       while (true) {
         const count = await store.incrementWindow(this.key, intervalMs);
         if (count <= maxReqs) break;
+        if (Date.now() >= deadline) break;
         await sleep(intervalMs);
       }
     }
@@ -113,47 +126,51 @@ export class RateLimiter {
     };
   }
 
-  private async waitForSlot(): Promise<void> {
-    const max = this.config.maxConcurrent;
-    if (!max) return;
-
-    if (this.activeCount < max) return;
-
-    return new Promise<void>((resolve) => {
-      this.waitQueue.push(resolve);
-    });
-  }
-
+  /**
+   * Waits until there's room in the sliding window, then reserves the slot
+   * (records the timestamp) before returning — atomically with the capacity
+   * check, so two overlapping acquire() calls can't both see "room" and
+   * both proceed (a check-then-act race that a separate check + later
+   * push(Date.now()) in the caller would otherwise allow).
+   */
   private async waitForWindow(): Promise<void> {
     const maxReqs = this.config.maxRequestsPerInterval;
     const intervalMs = this.config.intervalMs ?? 1000;
     if (!maxReqs) return;
 
-    // Remove stale timestamps
-    const now = Date.now();
-    this.windowTimestamps = this.windowTimestamps.filter(
-      (ts) => now - ts < intervalMs
-    );
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const now = Date.now();
+      this.windowTimestamps = this.windowTimestamps.filter(
+        (ts) => now - ts < intervalMs
+      );
 
-    if (this.windowTimestamps.length < maxReqs) return;
+      if (this.windowTimestamps.length < maxReqs) {
+        this.windowTimestamps.push(now);
+        return;
+      }
 
-    // Wait until the end of the current window
-    const oldest = this.windowTimestamps[0];
-    const waitMs = intervalMs - (now - oldest) + 1;
-    await new Promise<void>((resolve) => setTimeout(resolve, waitMs));
-
-    // Clean up again after waiting
-    const now2 = Date.now();
-    this.windowTimestamps = this.windowTimestamps.filter(
-      (ts) => now2 - ts < intervalMs
-    );
+      // Wait until the end of the current window, then re-check.
+      const oldest = this.windowTimestamps[0];
+      const waitMs = intervalMs - (now - oldest) + 1;
+      await new Promise<void>((resolve) => setTimeout(resolve, waitMs));
+    }
   }
 
+  /**
+   * Wakes queued waiters up to `maxConcurrent`, reserving (incrementing
+   * activeCount for) each one synchronously before resolving it — resolving
+   * a waiter's promise only schedules its continuation as a microtask, so
+   * without reserving here first, a single freed slot could otherwise wake
+   * more than one waiter in the same synchronous pass (activeCount wouldn't
+   * reflect the first wakeup yet when the loop checks again).
+   */
   private drainQueue(): void {
     const max = this.config.maxConcurrent;
     if (!max) return;
 
     while (this.activeCount < max && this.waitQueue.length > 0) {
+      this.activeCount++;
       const next = this.waitQueue.shift();
       next?.();
     }

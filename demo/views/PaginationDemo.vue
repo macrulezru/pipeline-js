@@ -17,12 +17,14 @@ const items = ref<Build[]>([]);
 const pagesLoaded = ref(0);
 const loading = ref(false);
 const done = ref(false);
+const loadError = ref<string | null>(null);
 let abortController: AbortController | null = null;
 
 async function loadAll() {
   items.value = [];
   pagesLoaded.value = 0;
   done.value = false;
+  loadError.value = null;
   loading.value = true;
   abortController = new AbortController();
 
@@ -57,7 +59,9 @@ async function loadAll() {
     }
     done.value = true;
   } catch (e: any) {
-    if (e?.name !== "AbortError" && e?.message !== "canceled") throw e;
+    if (e?.name !== "AbortError" && e?.message !== "canceled") {
+      loadError.value = e?.message ?? String(e);
+    }
   } finally {
     loading.value = false;
   }
@@ -123,6 +127,16 @@ const statusCounts = computed(() => {
       </button>
       <button class="btn btn--abort" v-if="loading" @click="stopLoading">✕ Stop</button>
     </div>
+
+    <Transition name="slide-up">
+      <div class="error-banner" v-if="loadError">
+        <span class="error-banner__icon">⚠</span>
+        <div>
+          <div class="error-banner__title">Failed to load</div>
+          <div class="error-banner__msg">{{ loadError }}</div>
+        </div>
+      </div>
+    </Transition>
 
     <div class="stats-row" v-if="items.length">
       <div class="stat-box">

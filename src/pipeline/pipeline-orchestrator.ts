@@ -92,6 +92,9 @@ export class PipelineOrchestrator<TKeys extends string = string> {
   /** AbortController used to cancel the pipeline */
   private abortController: AbortController | null = null;
 
+  /** AbortController used to cancel an in-flight rerunStep() that didn't get an explicit externalSignal. */
+  private _rerunAbortController: AbortController | null = null;
+
   /** Pause/resume mechanism */
   _pauseController = new PauseController();
 
@@ -301,6 +304,9 @@ export class PipelineOrchestrator<TKeys extends string = string> {
     if (this.abortController) {
       this.abortController.abort();
     }
+    if (this._rerunAbortController) {
+      this._rerunAbortController.abort();
+    }
     // If the pipeline was paused, wake it up so it can finish
     if (this._pauseController.isPaused) this.resume();
   }
@@ -327,7 +333,14 @@ export class PipelineOrchestrator<TKeys extends string = string> {
   async emit(event: string, ...args: any[]) {
     if (this.eventHandlers[event]) {
       for (const handler of this.eventHandlers[event]) {
-        await handler(...args);
+        try {
+          await handler(...args);
+        } catch (err) {
+          // A throwing subscriber must not propagate into executeStage() and
+          // turn an otherwise-successful step into an error — record it and
+          // keep notifying the remaining handlers instead.
+          this.addLog("error", `event handler for "${event}" threw`, { error: err });
+        }
       }
     }
   }
@@ -740,6 +753,15 @@ export class PipelineOrchestrator<TKeys extends string = string> {
   // Helper method: find a stage by key, returning its index
   // ─────────────────────────────────────────────────────────────────────────
 
+  /**
+   * Finds a stage by key for `rerunStep()` — deliberately excludes stream/
+   * WebSocket stages (in addition to sub-pipelines), since the returned
+   * `.stage` is cast to `PipelineStageConfig` and handed to `executeStage()`,
+   * which only knows the `request`-based execution path. A stream/WebSocket
+   * item has no `request`, so `executeStage()` would silently fall through
+   * to the "no request function — use `key` as a URL" shorthand, treating
+   * the stage's key as a literal URL to GET.
+   */
   private findStageByKey(
     key: string,
   ): { stage: PipelineStageConfig; index: number } | undefined {
@@ -748,7 +770,7 @@ export class PipelineOrchestrator<TKeys extends string = string> {
       if (isParallelGroup(item)) {
         const found = item.parallel.find((s) => s.key === key);
         if (found) return { stage: found, index: i };
-      } else if (!isSubPipeline(item)) {
+      } else if (!isSubPipeline(item) && !isStreamStage(item) && !isWebSocketStage(item)) {
         const stage = item as PipelineStageConfig;
         if (stage.key === key) return { stage, index: i };
       }
@@ -1022,8 +1044,11 @@ export class PipelineOrchestrator<TKeys extends string = string> {
     const pipelineStartTs = Date.now();
 
     // ── Persist adapter: load the saved state ─────────────
+    // autoReset takes precedence — loading a persisted snapshot right after
+    // an autoReset would just re-import the old state we just cleared,
+    // silently making autoReset a no-op whenever persistAdapter is also set.
     const persistAdapter = this.config.options?.persistAdapter;
-    if (persistAdapter) {
+    if (persistAdapter && !this.autoReset) {
       try {
         const saved = await persistAdapter.load();
         if (saved) this.importState(saved);
@@ -1117,63 +1142,56 @@ export class PipelineOrchestrator<TKeys extends string = string> {
       externalSignal?: AbortSignal;
     },
   ): Promise<PipelineStepResult | undefined> {
-    // Search for the stage, including inside parallel groups
-    let stage: PipelineStageConfig | undefined;
-    let stepIndex = -1;
-
-    for (let i = 0; i < this.config.stages.length; i++) {
-      const item = this.config.stages[i];
-      if (isParallelGroup(item)) {
-        const found = item.parallel.find((s) => s.key === stepKey);
-        if (found) {
-          stage = found;
-          stepIndex = i;
-          break;
-        }
-      } else if (
-        !isSubPipeline(item) &&
-        (item as PipelineStageConfig).key === stepKey
-      ) {
-        stage = item as PipelineStageConfig;
-        stepIndex = i;
-        break;
-      }
-    }
-
-    if (!stage || stepIndex === -1) return undefined;
+    // Search for the stage, including inside parallel groups. Reuses
+    // findStageByKey() (also excludes stream/WebSocket stages — see its
+    // own doc comment for why executeStage() can't handle those).
+    const found = this.findStageByKey(stepKey);
+    if (!found) return undefined;
+    const { stage, index: stepIndex } = found;
 
     // rerunStep — an independent execution, separate from the current run(); gets its own runId.
     this._runId = this._generateRunId();
 
-    this.addLog("log", `rerunStep:${stepKey}:start`, { stepIndex });
-    await this.emit("log", { type: "rerunStep:start", stepKey, stepIndex });
+    // Own AbortController when the caller doesn't supply one, so abort()
+    // can actually cancel this rerun — stored on the instance rather than
+    // local so abort() can reach it.
+    const ownController = options?.externalSignal ? null : new AbortController();
+    if (ownController) this._rerunAbortController = ownController;
+    const signal = options?.externalSignal ?? ownController!.signal;
 
-    const signal = options?.externalSignal ?? new AbortController().signal;
+    try {
+      this.addLog("log", `rerunStep:${stepKey}:start`, { stepIndex });
+      await this.emit("log", { type: "rerunStep:start", stepKey, stepIndex });
 
-    const result = await this.executeStage(
-      stepIndex,
-      stage,
-      signal,
-      options?.onStepPause,
-    );
+      const result = await this.executeStage(
+        stepIndex,
+        stage,
+        signal,
+        options?.onStepPause,
+      );
 
-    const logType = result.status === "error" ? "error" : "log";
-    this.addLog(logType, `rerunStep:${stepKey}:${result.status}`, {
-      stepIndex,
-      ...(result.status === "error"
-        ? { error: result.error }
-        : { data: result.data }),
-    });
-    await this.emit("log", {
-      type: `rerunStep:${result.status}`,
-      stepKey,
-      stepIndex,
-      ...(result.status === "error"
-        ? { error: result.error }
-        : { data: result.data }),
-    });
+      const logType = result.status === "error" ? "error" : "log";
+      this.addLog(logType, `rerunStep:${stepKey}:${result.status}`, {
+        stepIndex,
+        ...(result.status === "error"
+          ? { error: result.error }
+          : { data: result.data }),
+      });
+      await this.emit("log", {
+        type: `rerunStep:${result.status}`,
+        stepKey,
+        stepIndex,
+        ...(result.status === "error"
+          ? { error: result.error }
+          : { data: result.data }),
+      });
 
-    return result;
+      return result;
+    } finally {
+      if (ownController && this._rerunAbortController === ownController) {
+        this._rerunAbortController = null;
+      }
+    }
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -1182,12 +1200,23 @@ export class PipelineOrchestrator<TKeys extends string = string> {
 
   private mergeSignals(a: AbortSignal, b: AbortSignal): AbortSignal {
     const controller = new AbortController();
-    const abort = () => controller.abort();
+    // Whichever of a/b fires first must remove the listener from BOTH —
+    // `{ once: true }` alone only self-cleans the one that actually fired,
+    // leaving a listener on the other (often long-lived, e.g. a reused
+    // external signal across many run() calls) registered forever.
+    const cleanup = () => {
+      a.removeEventListener("abort", onAbort);
+      b.removeEventListener("abort", onAbort);
+    };
+    const onAbort = () => {
+      cleanup();
+      controller.abort();
+    };
     if (a.aborted || b.aborted) {
       controller.abort();
     } else {
-      a.addEventListener("abort", abort, { once: true });
-      b.addEventListener("abort", abort, { once: true });
+      a.addEventListener("abort", onAbort);
+      b.addEventListener("abort", onAbort);
     }
     return controller.signal;
   }

@@ -120,45 +120,59 @@ export async function executeWebSocketStage<T>(
         void item.onOpen?.({ ...hookParams, event });
       };
 
-      const onMessage = async (event: any) => {
-        try {
-          const data = await item.onMessage(event?.data, { ...hookParams, event });
-          if (data !== undefined) {
-            collected.push(data as T);
-            item.onChunk?.(data as T, ctx.sharedData);
-            await ctx.emit(`step:${key}:progress`, { chunk: data, chunks: [...collected] });
-          }
-          if (data !== undefined && item.closeOn?.(data as T, hookParams)) {
-            try {
-              ws.close();
-            } catch {
-              /* ignore — onClose still fires (or won't, but we're already settling below) */
+      // Serialized via a promise chain so overlapping "message" events (a new
+      // one arriving before the previous async onMessage call finishes) are
+      // still processed in arrival order — otherwise collected/onChunk/progress
+      // could interleave out of order. Keep `onMessage` as a stable function
+      // reference: cleanup() removes the listener by identity.
+      let messageChain: Promise<void> = Promise.resolve();
+      const onMessage = (event: any) => {
+        messageChain = messageChain.then(async () => {
+          try {
+            const data = await item.onMessage(event?.data, { ...hookParams, event });
+            if (data !== undefined) {
+              collected.push(data as T);
+              item.onChunk?.(data as T, ctx.sharedData);
+              await ctx.emit(`step:${key}:progress`, { chunk: data, chunks: [...collected] });
             }
+            if (data !== undefined && item.closeOn?.(data as T, hookParams)) {
+              try {
+                ws.close();
+              } catch {
+                /* ignore — onClose still fires (or won't, but we're already settling below) */
+              }
+            }
+          } catch (err) {
+            settle(() => reject(err));
           }
-        } catch (err) {
-          settle(() => reject(err));
-        }
+        });
       };
 
       const onClose = (event: any) => {
         settle(() => {
           const wasClean = event?.wasClean ?? !sawError;
           void (async () => {
-            await item.onClose?.({
-              ...hookParams,
-              code: event?.code,
-              reason: event?.reason,
-              wasClean,
-            });
-            if (wasClean) {
-              resolve(collected);
-            } else {
-              reject(
-                new Error(
-                  `WebSocket stage "${key}" closed uncleanly` +
-                    (event?.code !== undefined ? ` (code ${event.code})` : ""),
-                ),
-              );
+            try {
+              await item.onClose?.({
+                ...hookParams,
+                code: event?.code,
+                reason: event?.reason,
+                wasClean,
+              });
+              if (wasClean) {
+                resolve(collected);
+              } else {
+                reject(
+                  new Error(
+                    `WebSocket stage "${key}" closed uncleanly` +
+                      (event?.code !== undefined ? ` (code ${event.code})` : ""),
+                  ),
+                );
+              }
+            } catch (hookErr) {
+              // A throwing onClose hook must still settle the stage —
+              // otherwise it hangs forever (resolve/reject above never run).
+              reject(hookErr);
             }
           })();
         });

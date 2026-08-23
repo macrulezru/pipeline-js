@@ -742,7 +742,7 @@ body {
 }
 .console__line { display: flex; gap: 10px; animation: fadeInUp 0.15s ease; }
 .console__time { color: var(--text-dim); flex-shrink: 0; }
-.console__text { color: #c9d1d9; word-break: break-word; }
+.console__text { color: #c9d1d9; overflow-wrap: break-word; }
 .console__line--success .console__text { color: #4ade80; }
 .console__line--error   .console__text { color: #f87171; }
 .console__line--warn    .console__text { color: #fbbf24; }

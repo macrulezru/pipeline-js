@@ -94,6 +94,34 @@ describe("clearRestClientCache", () => {
     expect(c1).not.toBe(c2);
   });
 
+  it("two configs identical except for auth do not share a cached client — each keeps its own AuthProvider", async () => {
+    clearRestClientCache();
+    const adapterRequest = vi.fn().mockResolvedValue({ data: {}, status: 200, statusText: "OK", headers: {} });
+
+    const configA = {
+      baseURL: "http://test.local",
+      adapter: { request: adapterRequest },
+      auth: { getToken: async () => "token-A" },
+    };
+    const configB = {
+      baseURL: "http://test.local",
+      adapter: { request: adapterRequest },
+      auth: { getToken: async () => "token-B" },
+    };
+
+    const clientA = getRestClient(configA);
+    const clientB = getRestClient(configB);
+    expect(clientA).not.toBe(clientB);
+
+    await clientA.get("/ping");
+    await clientB.get("/ping");
+
+    const headersA = adapterRequest.mock.calls[0][0].headers as Record<string, string>;
+    const headersB = adapterRequest.mock.calls[1][0].headers as Record<string, string>;
+    expect(headersA.Authorization).toBe("Bearer token-A");
+    expect(headersB.Authorization).toBe("Bearer token-B");
+  });
+
   it("clearCache() clears the client's response cache", () => {
     const client = createRestClient({ baseURL: "http://localhost" });
     expect(() => client.clearCache()).not.toThrow();

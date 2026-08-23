@@ -74,27 +74,35 @@ async function executeWebSocketStage(ctx, stepIndex, item, signal) {
                 var _a;
                 void ((_a = item.onOpen) === null || _a === void 0 ? void 0 : _a.call(item, { ...hookParams, event }));
             };
-            const onMessage = async (event) => {
-                var _a, _b;
-                try {
-                    const data = await item.onMessage(event === null || event === void 0 ? void 0 : event.data, { ...hookParams, event });
-                    if (data !== undefined) {
-                        collected.push(data);
-                        (_a = item.onChunk) === null || _a === void 0 ? void 0 : _a.call(item, data, ctx.sharedData);
-                        await ctx.emit(`step:${key}:progress`, { chunk: data, chunks: [...collected] });
-                    }
-                    if (data !== undefined && ((_b = item.closeOn) === null || _b === void 0 ? void 0 : _b.call(item, data, hookParams))) {
-                        try {
-                            ws.close();
+            // Serialized via a promise chain so overlapping "message" events (a new
+            // one arriving before the previous async onMessage call finishes) are
+            // still processed in arrival order — otherwise collected/onChunk/progress
+            // could interleave out of order. Keep `onMessage` as a stable function
+            // reference: cleanup() removes the listener by identity.
+            let messageChain = Promise.resolve();
+            const onMessage = (event) => {
+                messageChain = messageChain.then(async () => {
+                    var _a, _b;
+                    try {
+                        const data = await item.onMessage(event === null || event === void 0 ? void 0 : event.data, { ...hookParams, event });
+                        if (data !== undefined) {
+                            collected.push(data);
+                            (_a = item.onChunk) === null || _a === void 0 ? void 0 : _a.call(item, data, ctx.sharedData);
+                            await ctx.emit(`step:${key}:progress`, { chunk: data, chunks: [...collected] });
                         }
-                        catch {
-                            /* ignore — onClose still fires (or won't, but we're already settling below) */
+                        if (data !== undefined && ((_b = item.closeOn) === null || _b === void 0 ? void 0 : _b.call(item, data, hookParams))) {
+                            try {
+                                ws.close();
+                            }
+                            catch {
+                                /* ignore — onClose still fires (or won't, but we're already settling below) */
+                            }
                         }
                     }
-                }
-                catch (err) {
-                    settle(() => reject(err));
-                }
+                    catch (err) {
+                        settle(() => reject(err));
+                    }
+                });
             };
             const onClose = (event) => {
                 settle(() => {
@@ -102,18 +110,25 @@ async function executeWebSocketStage(ctx, stepIndex, item, signal) {
                     const wasClean = (_a = event === null || event === void 0 ? void 0 : event.wasClean) !== null && _a !== void 0 ? _a : !sawError;
                     void (async () => {
                         var _a;
-                        await ((_a = item.onClose) === null || _a === void 0 ? void 0 : _a.call(item, {
-                            ...hookParams,
-                            code: event === null || event === void 0 ? void 0 : event.code,
-                            reason: event === null || event === void 0 ? void 0 : event.reason,
-                            wasClean,
-                        }));
-                        if (wasClean) {
-                            resolve(collected);
+                        try {
+                            await ((_a = item.onClose) === null || _a === void 0 ? void 0 : _a.call(item, {
+                                ...hookParams,
+                                code: event === null || event === void 0 ? void 0 : event.code,
+                                reason: event === null || event === void 0 ? void 0 : event.reason,
+                                wasClean,
+                            }));
+                            if (wasClean) {
+                                resolve(collected);
+                            }
+                            else {
+                                reject(new Error(`WebSocket stage "${key}" closed uncleanly` +
+                                    ((event === null || event === void 0 ? void 0 : event.code) !== undefined ? ` (code ${event.code})` : "")));
+                            }
                         }
-                        else {
-                            reject(new Error(`WebSocket stage "${key}" closed uncleanly` +
-                                ((event === null || event === void 0 ? void 0 : event.code) !== undefined ? ` (code ${event.code})` : "")));
+                        catch (hookErr) {
+                            // A throwing onClose hook must still settle the stage —
+                            // otherwise it hangs forever (resolve/reject above never run).
+                            reject(hookErr);
                         }
                     })();
                 });

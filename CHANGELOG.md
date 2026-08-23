@@ -177,7 +177,7 @@
   uploads & progress"), and tests confirming the passthrough for both the
   axios path and custom adapters.
 
-### Changed
+### Changed (continued)
 
 - **Test coverage pass on the retry engine, cache, and Vue/React hooks.** No
   public API changes. `request-executor.ts` (retry/backoff/Retry-After) went
@@ -196,8 +196,8 @@
   whatever was last built into `dist`, not the current `src`: editing a hook
   and running `npm test` without `npm run build` first would pass against
   stale compiled output. Fixed via a `resolve.alias` in `vitest.config.ts`
-  that redirects those two specifiers to `src/vue.ts`/`src/react.ts` (test
-  files themselves are unchanged). This also surfaced a real, separate gap —
+  that redirects those two specifiers to the Vue/React entry-point source
+  files (test files themselves are unchanged). This also surfaced a real, separate gap —
   `usePipelineStageResultVue`/`usePipelineStageResultReact` were imported but
   never actually invoked by any test — now covered.
 - **Removed `@typescript-eslint/no-explicit-any` warnings from
@@ -213,7 +213,7 @@
 - **Split the two largest files by domain — no public API or behavior
   change.** `pipeline-orchestrator.ts` (1677 lines) had its pause/resume,
   stream-stage, WebSocket-stage, sub-pipeline, and export/import-state logic
-  extracted into `src/orchestrator/*.ts` as standalone functions taking a
+  extracted into `src/pipeline/orchestrator/*.ts` as standalone functions taking a
   narrow, purpose-typed `ctx` parameter, leaving `PipelineOrchestrator`
   itself as a thin facade (1677→1225 lines, -27%). `types.ts` (1276 lines)
   was split by domain into `types/http.ts`, `types/pipeline.ts`, and

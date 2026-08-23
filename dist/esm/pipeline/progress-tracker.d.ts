@@ -9,18 +9,12 @@ export declare class ProgressTracker {
      * Returns a snapshot of the current progress.
      * Alias for getProgress() — use subscribeProgress to track changes.
      */
-    getProgressRef(): {
-        currentStage: number;
-        totalStages: number;
-        stageStatuses: Array<import("../types.js").PipelineStepStatus>;
-    };
+    getProgressRef(): PipelineProgress;
     updateStage(stage: number, status: PipelineProgress["stageStatuses"][number]): void;
-    getProgress(): {
-        currentStage: number;
-        totalStages: number;
-        stageStatuses: Array<import("../types.js").PipelineStepStatus>;
-    };
+    getProgress(): PipelineProgress;
     subscribe(listener: ProgressListener): () => void;
     private notify;
+    /** A shallow copy of `progress` with `stageStatuses` also cloned, so a returned snapshot is a stable point-in-time value — `updateStage()` mutates the live array in place, and without cloning it, every previously-returned snapshot would silently reflect later updates too. */
+    private snapshot;
 }
 export {};

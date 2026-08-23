@@ -407,9 +407,10 @@ describe("createRestClient — offlineQueue integration", () => {
 
   it("a custom shouldQueue overrides the mutating-methods default", async () => {
     const persistAdapter = createMemoryPersistAdapter();
+    const adapterRequest = vi.fn().mockResolvedValue({ data: {}, status: 200, statusText: "OK", headers: {} });
     const client = createRestClient({
       baseURL: "https://api.example.com",
-      adapter: { request: vi.fn() },
+      adapter: { request: adapterRequest },
       offlineQueue: {
         enabled: true,
         persistAdapter,
@@ -419,7 +420,9 @@ describe("createRestClient — offlineQueue integration", () => {
       },
     });
 
-    await expect(client.post("/other", {})).rejects.toThrow(); // not queued -> hits the (unmocked-response) adapter and fails differently
+    // Not matched by shouldQueue -> reaches the adapter instead of being queued
+    await expect(client.post("/other", {})).resolves.toMatchObject({ status: 200 });
+    expect(adapterRequest).toHaveBeenCalledTimes(1);
     await expect(client.get("/queue-me")).rejects.toBeInstanceOf(OfflineQueuedError); // queued despite being GET
   });
 });

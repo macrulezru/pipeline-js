@@ -59,8 +59,9 @@ export async function executeSubPipeline(
     stepIndex,
   });
 
+  let subOrchestrator: PipelineOrchestrator | undefined;
   try {
-    const subOrchestrator = new PipelineOrchestrator({
+    subOrchestrator = new PipelineOrchestrator({
       config: item.subPipeline,
       httpConfig: item.httpConfig,
       sharedData: {
@@ -132,5 +133,7 @@ export async function executeSubPipeline(
     });
 
     throw err;
+  } finally {
+    subOrchestrator?.destroy();
   }
 }

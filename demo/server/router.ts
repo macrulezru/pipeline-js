@@ -52,7 +52,12 @@ export class Router {
       if (!match) continue;
       const params: Record<string, string> = {};
       route.keys.forEach((key, i) => {
-        params[key] = decodeURIComponent(match[i + 1]);
+        const raw = match[i + 1];
+        try {
+          params[key] = decodeURIComponent(raw);
+        } catch {
+          params[key] = raw; // malformed percent-encoding — fall back to the raw segment
+        }
       });
       await route.handler(req, res, params, url);
       return true;

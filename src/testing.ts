@@ -71,6 +71,10 @@ function matchesRoute(route: MockRoute, info: MockRequestInfo): boolean {
     return false;
   }
   if (typeof route.url === "string") return info.url.includes(route.url);
+  // A global/sticky RegExp is stateful across .test() calls (lastIndex
+  // advances on match) — reset it so a reused route.url behaves the same
+  // way on every request instead of alternating true/false.
+  route.url.lastIndex = 0;
   return route.url.test(info.url);
 }
 

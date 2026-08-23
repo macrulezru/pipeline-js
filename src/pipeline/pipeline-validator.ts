@@ -1,24 +1,6 @@
+import { isParallelGroup, isSubPipeline, isStreamStage, isWebSocketStage } from "./orchestrator/stage-guards.js";
+
 import type { PipelineConfig, PipelineItem } from "../types.js";
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Type guards (local, without importing from orchestrator)
-// ─────────────────────────────────────────────────────────────────────────────
-
-function isParallelGroup(item: PipelineItem): item is import("../types.js").ParallelStageGroup {
-  return typeof item === "object" && item !== null && "parallel" in item;
-}
-
-function isSubPipeline(item: PipelineItem): item is import("../types.js").SubPipelineStage {
-  return typeof item === "object" && item !== null && "subPipeline" in item;
-}
-
-function isStreamStage(item: PipelineItem): item is import("../types.js").StreamStageConfig {
-  return typeof item === "object" && item !== null && "stream" in item;
-}
-
-function isWebSocketStage(item: PipelineItem): item is import("../types.js").WebSocketStageConfig {
-  return typeof item === "object" && item !== null && "onMessage" in item;
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Validator
@@ -80,7 +62,7 @@ function collectAllKeys(
   for (const item of stages) {
     if (isParallelGroup(item)) {
       validateKey(item.key, `${context} > parallel group`, errors);
-      keys.push(item.key);
+      if (isValidKey(item.key)) keys.push(item.key);
 
       if (!Array.isArray(item.parallel) || item.parallel.length === 0) {
         errors.push(`[${context}] parallel group "${item.key}" must have at least one stage`);
@@ -90,21 +72,21 @@ function collectAllKeys(
       }
     } else if (isSubPipeline(item)) {
       validateKey(item.key, `${context} > subPipeline`, errors);
-      keys.push(item.key);
+      if (isValidKey(item.key)) keys.push(item.key);
 
       // Recursive validation of the nested pipeline
       const subResult = validatePipelineConfig(item.subPipeline, `${context} > subPipeline:${item.key}`);
       errors.push(...subResult.errors);
     } else if (isStreamStage(item)) {
       validateKey(item.key, `${context} > stream`, errors);
-      keys.push(item.key);
+      if (isValidKey(item.key)) keys.push(item.key);
 
       if (typeof item.stream !== "function") {
         errors.push(`[${context}] stream stage "${item.key}": stream must be a function`);
       }
     } else if (isWebSocketStage(item)) {
       validateKey(item.key, `${context} > websocket`, errors);
-      keys.push(item.key);
+      if (isValidKey(item.key)) keys.push(item.key);
 
       if (
         item.url === undefined ||
@@ -125,7 +107,7 @@ function collectAllKeys(
       // Regular stage
       const stage = item as import("../types.js").PipelineStageConfig;
       validateKey(stage.key, context, errors);
-      keys.push(stage.key);
+      if (isValidKey(stage.key)) keys.push(stage.key);
 
       if (
         stage.request !== undefined &&
@@ -155,6 +137,11 @@ function collectAllKeys(
   }
 
   return keys;
+}
+
+/** Only push keys that passed validateKey() into the dupe-check list — an already-reported invalid key (empty/non-string) shouldn't also trigger a spurious "duplicate key" error. */
+function isValidKey(key: unknown): key is string {
+  return typeof key === "string" && key.trim() !== "";
 }
 
 function validateKey(key: unknown, context: string, errors: string[]): void {

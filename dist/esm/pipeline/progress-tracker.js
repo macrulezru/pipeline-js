@@ -17,7 +17,7 @@ export class ProgressTracker {
      * Alias for getProgress() — use subscribeProgress to track changes.
      */
     getProgressRef() {
-        return { ...this.progress };
+        return this.snapshot();
     }
     updateStage(stage, status) {
         this.progress.stageStatuses[stage] = status;
@@ -25,19 +25,23 @@ export class ProgressTracker {
         this.notify();
     }
     getProgress() {
-        return { ...this.progress };
+        return this.snapshot();
     }
     subscribe(listener) {
         this.listeners.push(listener);
         // Immediately notify the new subscriber of the current state
-        listener({ ...this.progress });
+        listener(this.snapshot());
         return () => {
             this.listeners = this.listeners.filter((l) => l !== listener);
         };
     }
     notify() {
         for (const listener of this.listeners) {
-            listener({ ...this.progress });
+            listener(this.snapshot());
         }
+    }
+    /** A shallow copy of `progress` with `stageStatuses` also cloned, so a returned snapshot is a stable point-in-time value — `updateStage()` mutates the live array in place, and without cloning it, every previously-returned snapshot would silently reflect later updates too. */
+    snapshot() {
+        return { ...this.progress, stageStatuses: [...this.progress.stageStatuses] };
     }
 }

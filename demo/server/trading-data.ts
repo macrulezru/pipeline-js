@@ -31,6 +31,8 @@ interface Order {
 }
 
 const ordersByIdempotencyKey = new Map<string, Order>();
+/** Every created order, keyed or not — the idempotency map alone would miss orders placed without a key. */
+const allOrders: Order[] = [];
 const validTokens = new Map<string, number>();
 let brokerFailStreak = 0;
 let rateLimitWindow = { remaining: 5, limit: 5, resetAt: Date.now() + 10_000 };
@@ -106,7 +108,7 @@ export function registerTradingRoutes(router: Router): void {
   router.get("/api/trading/history", async (req, res, _params, url) => {
     await sleep(parseLatencyMs(url));
     const limit = Math.max(1, Math.min(50, Number(url.searchParams.get("limit") ?? "10")));
-    const all = [...ordersByIdempotencyKey.values()].sort((a, b) => b.createdAt - a.createdAt);
+    const all = [...allOrders].sort((a, b) => b.createdAt - a.createdAt);
     const offset = Math.max(0, Number(url.searchParams.get("offset") ?? "0") || 0);
     sendJson(res, 200, { items: all.slice(offset, offset + limit), total: all.length });
   });
@@ -123,8 +125,10 @@ export function registerTradingRoutes(router: Router): void {
       return;
     }
 
+    // Refresh (possibly reset) the window before deciding — otherwise an
+    // expired window sitting at remaining:0 wrongly 429s one extra time.
+    let rateHeaders = currentRateLimitHeaders();
     if (rateLimitWindow.remaining <= 0) {
-      const rateHeaders = currentRateLimitHeaders();
       res.writeHead(429, {
         "Content-Type": "application/json",
         ...rateHeaders,
@@ -134,7 +138,7 @@ export function registerTradingRoutes(router: Router): void {
       return;
     }
     rateLimitWindow.remaining--;
-    const rateHeaders = currentRateLimitHeaders();
+    rateHeaders = currentRateLimitHeaders();
 
     const failFirstN = Number(url.searchParams.get("failFirstN") ?? "0");
     if (failFirstN > 0) {
@@ -157,6 +161,7 @@ export function registerTradingRoutes(router: Router): void {
       createdAt: Date.now(),
     };
     if (key) ordersByIdempotencyKey.set(key, order);
+    allOrders.push(order);
     sendJson(res, 201, order, rateHeaders);
   });
 

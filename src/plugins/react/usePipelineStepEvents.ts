@@ -32,6 +32,11 @@ export function usePipelineStepEventReact(
 export function usePipelineLogsReact(orchestrator: PipelineOrchestrator) {
   const [logs, setLogs] = useState(() => orchestrator.getLogs());
   useEffect(() => {
+    // Refresh immediately for the new orchestrator — the lazy useState
+    // initializer above only runs once (on mount), so without this, logs
+    // would keep showing the previous orchestrator's data until the new
+    // one happens to fire its own first "log" event.
+    setLogs(orchestrator.getLogs());
     const handler = () => setLogs(orchestrator.getLogs());
     const unsubscribe = orchestrator.on("log", handler);
     return () => unsubscribe && unsubscribe();

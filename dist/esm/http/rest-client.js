@@ -560,6 +560,23 @@ export function createRestClient(config) {
         },
     };
 }
+// Gives each distinct `auth` provider object a stable id, so the cache key
+// below can tell two configs apart when they differ only in *which*
+// AuthProvider they pass — `!!config.auth` alone would collapse them onto
+// the same cached client, silently sharing one config's auth on requests
+// made through the other's.
+const authProviderIds = new WeakMap();
+let nextAuthProviderId = 0;
+function getAuthProviderKey(auth) {
+    if (!auth)
+        return null;
+    let id = authProviderIds.get(auth);
+    if (id === undefined) {
+        id = `auth-${nextAuthProviderId++}`;
+        authProviderIds.set(auth, id);
+    }
+    return id;
+}
 export function getRestClient(config) {
     var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v;
     const key = JSON.stringify({
@@ -582,7 +599,7 @@ export function getRestClient(config) {
         sanitizeHeaders: (_k = config.sanitizeHeaders) !== null && _k !== void 0 ? _k : true,
         sensitiveHeaders: (_l = config.sensitiveHeaders) !== null && _l !== void 0 ? _l : [],
         metrics: !!config.metrics,
-        auth: !!config.auth,
+        auth: getAuthProviderKey(config.auth),
         deduplicateRequests: (_m = config.deduplicateRequests) !== null && _m !== void 0 ? _m : false,
         interceptors: !!config.interceptors,
         onError: !!config.onError,

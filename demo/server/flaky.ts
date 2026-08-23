@@ -54,7 +54,7 @@ export function maybeSendForcedFailure(url: URL, res: ServerResponse): boolean {
   const failStatusRaw = url.searchParams.get("failStatus");
   if (!failStatusRaw) return false;
   const status = Number(failStatusRaw);
-  if (!Number.isFinite(status)) return false;
+  if (!Number.isFinite(status) || status < 100 || status > 999) return false;
 
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   const retryAfter = url.searchParams.get("retryAfter");

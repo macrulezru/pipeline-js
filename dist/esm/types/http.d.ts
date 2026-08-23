@@ -67,7 +67,7 @@ export type RetryOptions = Partial<RetryConfig>;
  * Methods can be synchronous or asynchronous (return a Promise) — the client
  * always calls them via `await`.
  *
- * `getStale`/`deleteWhere`/`keys` are optional: without them the
+ * `getStale`/`deleteWhere` are optional: without them the
  * `stale-while-revalidate` strategy and `invalidateCache()` are unavailable, respectively
  * (in that case `invalidateCache()` returns 0 and deletes nothing — see its JSDoc).
  *

@@ -115,9 +115,9 @@ npm install react@>=19 react-dom@>=19
 No bundler, no Node — a single `<script>` tag pulls in the core module
 (`PipelineOrchestrator` / `createRestClient` / everything under the
 [core entry point](#entry-points), no Vue/React) with `axios` bundled in, so
-nothing else needs to be loaded separately. Exposes a `window.RestPipeline`
-global (UMD — also usable from CommonJS/AMD if you happen to load it that
-way):
+nothing else needs to be loaded separately. Built as a self-contained IIFE
+that exposes a `window.RestPipeline` global — a plain `<script>` tag, no
+CommonJS/AMD loader support:
 
 ```html
 <script src="https://unpkg.com/rest-pipeline-js/dist/umd/rest-pipeline.umd.min.js"></script>
@@ -127,9 +127,9 @@ way):
   const client = createRestClient({ baseURL: "https://api.example.com" });
 
   const pipeline = new PipelineOrchestrator({
-    config: [
-      { key: "user", request: () => client.get("/me") },
-    ],
+    config: {
+      stages: [{ key: "user", request: () => client.get("/me") }],
+    },
   });
 
   pipeline.run().then((result) => console.log(result));

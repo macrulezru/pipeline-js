@@ -31,6 +31,8 @@ export declare class PipelineOrchestrator<TKeys extends string = string> {
     private autoReset;
     /** AbortController used to cancel the pipeline */
     private abortController;
+    /** AbortController used to cancel an in-flight rerunStep() that didn't get an explicit externalSignal. */
+    private _rerunAbortController;
     /** Pause/resume mechanism */
     _pauseController: PauseController;
     config: PipelineConfig;
@@ -73,17 +75,9 @@ export declare class PipelineOrchestrator<TKeys extends string = string> {
     onStepError(handler: PipelineStepEventHandler): () => void;
     subscribeProgress(listener: (progress: import("../types.js").PipelineProgress) => void): () => void;
     subscribeStepProgress(stepKey: TKeys | (string & {}), listener: (status: PipelineStepStatus) => void): () => void;
-    getProgress(): {
-        currentStage: number;
-        totalStages: number;
-        stageStatuses: Array<PipelineStepStatus>;
-    };
+    getProgress(): import("../types.js").PipelineProgress;
     /** Returns a snapshot of the progress. For reactivity, use subscribeProgress. */
-    getProgressRef(): {
-        currentStage: number;
-        totalStages: number;
-        stageStatuses: Array<PipelineStepStatus>;
-    };
+    getProgressRef(): import("../types.js").PipelineProgress;
     getLogs(): InMemoryLogEntry[];
     /** Returns a synchronous snapshot of the results of all stages. */
     getStageResults(): Record<string, PipelineStepResult>;
@@ -118,6 +112,15 @@ export declare class PipelineOrchestrator<TKeys extends string = string> {
     private executeStreamStage;
     private executeWebSocketStage;
     private executeSubPipeline;
+    /**
+     * Finds a stage by key for `rerunStep()` — deliberately excludes stream/
+     * WebSocket stages (in addition to sub-pipelines), since the returned
+     * `.stage` is cast to `PipelineStageConfig` and handed to `executeStage()`,
+     * which only knows the `request`-based execution path. A stream/WebSocket
+     * item has no `request`, so `executeStage()` would silently fall through
+     * to the "no request function — use `key` as a URL" shorthand, treating
+     * the stage's key as a literal URL to GET.
+     */
     private findStageByKey;
     /**
      * Run a worker for each item in items with a concurrency limit.

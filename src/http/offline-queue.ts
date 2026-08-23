@@ -69,6 +69,7 @@ export class OfflineQueue {
   private queue: QueuedRequest[] = [];
   private hydrated: Promise<void>;
   private unsubscribe: (() => void) | undefined;
+  private flushing = false;
 
   constructor(
     private config: OfflineQueueConfig,
@@ -163,33 +164,54 @@ export class OfflineQueue {
   async flush(): Promise<void> {
     await this.hydrated;
 
-    while (this.queue.length > 0) {
-      if (!this.isOnline()) return;
+    // Guard against overlapping calls (e.g. a manual flushQueue() while an
+    // auto-flush from onOnlineChange is already in flight) — without this,
+    // both would read the same queue[0] and could replay it twice.
+    if (this.flushing) return;
+    this.flushing = true;
 
-      const next = this.queue[0];
-      try {
-        const response = await this.sendReplay(next);
-        this.queue.shift();
-        await this.persist();
-        this.config.onFlushSuccess?.(next, response);
-      } catch (err) {
-        if (!this.isOnline()) return; // connectivity dropped mid-flush — leave it queued
+    try {
+      while (this.queue.length > 0) {
+        if (!this.isOnline()) return;
 
-        const apiError = this.toApiError(err);
-        if (apiError.status !== undefined) {
-          // A real response from the backend rejected it — don't retry
-          // forever, surface it and move on to the rest of the queue.
-          this.queue.shift();
+        const next = this.queue[0];
+        try {
+          const response = await this.sendReplay(next);
+          this.removeById(next.id);
           await this.persist();
-          this.config.onFlushError?.(next, apiError);
-        } else {
-          // No HTTP status at all — a network-level failure indistinguishable
-          // from "still offline" despite isOnline() saying otherwise. Leave
-          // it queued; don't spin on the same entry within this call.
-          return;
+          this.config.onFlushSuccess?.(next, response);
+        } catch (err) {
+          if (!this.isOnline()) return; // connectivity dropped mid-flush — leave it queued
+
+          const apiError = this.toApiError(err);
+          if (apiError.status !== undefined) {
+            // A real response from the backend rejected it — don't retry
+            // forever, surface it and move on to the rest of the queue.
+            this.removeById(next.id);
+            await this.persist();
+            this.config.onFlushError?.(next, apiError);
+          } else {
+            // No HTTP status at all — a network-level failure indistinguishable
+            // from "still offline" despite isOnline() saying otherwise. Leave
+            // it queued; don't spin on the same entry within this call.
+            return;
+          }
         }
       }
+    } finally {
+      this.flushing = false;
     }
+  }
+
+  /**
+   * Removes a queue entry by id rather than shift()ing the front — `next`
+   * may no longer be at index 0 by the time an await resolves (e.g. a
+   * concurrent enqueue() trimmed the front via maxQueueSize while this entry
+   * was in flight), so shift() could otherwise remove the wrong entry.
+   */
+  private removeById(id: string): void {
+    const idx = this.queue.findIndex((r) => r.id === id);
+    if (idx !== -1) this.queue.splice(idx, 1);
   }
 
   /** Unsubscribes from online/offline notifications. Call when the owning client is no longer needed. */

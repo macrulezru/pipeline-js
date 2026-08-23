@@ -54,7 +54,10 @@ async function demo() {
 
 void demo;
 
-// Works with PipelineOrchestrator too, via httpConfig:
+// Works with PipelineOrchestrator too. This stage reuses the same `client`/
+// `adapter` configured above via its `request` function; `httpConfig` below
+// only matters for stages that omit `request` and use `key` as a URL
+// shorthand instead (see PipelineOrchestrator's own executor).
 export const orchestrator = new PipelineOrchestrator({
   config: {
     stages: [{ key: "fetchUser", request: async ({ sharedData }) => client.get(`/users/${sharedData.userId}`) }],

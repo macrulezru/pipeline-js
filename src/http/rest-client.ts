@@ -15,6 +15,7 @@ import type {
   CacheStore,
   TracingSpan,
   QueuedRequest,
+  AuthProvider,
 } from "../types.js";
 import { DEFAULT_SENSITIVE_HEADERS } from "../types.js";
 import type { AxiosInstance, AxiosResponse } from "axios";
@@ -717,6 +718,23 @@ export function createRestClient(config: HttpConfig) {
   };
 }
 
+// Gives each distinct `auth` provider object a stable id, so the cache key
+// below can tell two configs apart when they differ only in *which*
+// AuthProvider they pass — `!!config.auth` alone would collapse them onto
+// the same cached client, silently sharing one config's auth on requests
+// made through the other's.
+const authProviderIds = new WeakMap<AuthProvider, string>();
+let nextAuthProviderId = 0;
+function getAuthProviderKey(auth: AuthProvider | undefined): string | null {
+  if (!auth) return null;
+  let id = authProviderIds.get(auth);
+  if (id === undefined) {
+    id = `auth-${nextAuthProviderId++}`;
+    authProviderIds.set(auth, id);
+  }
+  return id;
+}
+
 export function getRestClient(config: HttpConfig): RestClient {
   const key = JSON.stringify({
     baseURL: config.baseURL,
@@ -738,7 +756,7 @@ export function getRestClient(config: HttpConfig): RestClient {
     sanitizeHeaders: config.sanitizeHeaders ?? true,
     sensitiveHeaders: config.sensitiveHeaders ?? [],
     metrics: !!config.metrics,
-    auth: !!config.auth,
+    auth: getAuthProviderKey(config.auth),
     deduplicateRequests: config.deduplicateRequests ?? false,
     interceptors: !!config.interceptors,
     onError: !!config.onError,

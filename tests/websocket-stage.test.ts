@@ -84,13 +84,16 @@ async function waitForWs(): Promise<FakeWebSocket> {
 }
 
 /**
- * Waits a couple of microtasks — enough for executeWebSocketStage's async
- * onMessage handler (it's always async, even for a sync `onMessage`) to
- * finish running after a synchronous `ws._message(...)`.
+ * Waits for executeWebSocketStage's onMessage handling (serialized through a
+ * promise chain, and always async even for a sync `onMessage`) to finish
+ * after a synchronous `ws._message(...)`. A fixed count of `Promise.resolve()`
+ * calls is brittle — it silently breaks whenever the await-depth inside that
+ * chain changes. A macrotask boundary isn't: it always runs after every
+ * microtask queued so far has drained, regardless of how many `await`/`.then()`
+ * levels are involved.
  */
 async function tick(): Promise<void> {
-  await Promise.resolve();
-  await Promise.resolve();
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
 }
 
 describe("WebSocketStageConfig — basic execution", () => {

@@ -35,7 +35,21 @@ export declare class RateLimiter {
      */
     acquire(): Promise<() => void>;
     private _acquireViaStore;
-    private waitForSlot;
+    /**
+     * Waits until there's room in the sliding window, then reserves the slot
+     * (records the timestamp) before returning — atomically with the capacity
+     * check, so two overlapping acquire() calls can't both see "room" and
+     * both proceed (a check-then-act race that a separate check + later
+     * push(Date.now()) in the caller would otherwise allow).
+     */
     private waitForWindow;
+    /**
+     * Wakes queued waiters up to `maxConcurrent`, reserving (incrementing
+     * activeCount for) each one synchronously before resolving it — resolving
+     * a waiter's promise only schedules its continuation as a microtask, so
+     * without reserving here first, a single freed slot could otherwise wake
+     * more than one waiter in the same synchronous pass (activeCount wouldn't
+     * reflect the first wakeup yet when the loop checks again).
+     */
     private drainQueue;
 }

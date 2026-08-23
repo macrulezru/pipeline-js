@@ -30,8 +30,9 @@ export async function executeSubPipeline(ctx, stepIndex, item, signal, globalCon
         stepKey: key,
         stepIndex,
     });
+    let subOrchestrator;
     try {
-        const subOrchestrator = new PipelineOrchestrator({
+        subOrchestrator = new PipelineOrchestrator({
             config: item.subPipeline,
             httpConfig: item.httpConfig,
             sharedData: {
@@ -98,5 +99,8 @@ export async function executeSubPipeline(ctx, stepIndex, item, signal, globalCon
             error: apiError,
         });
         throw err;
+    }
+    finally {
+        subOrchestrator === null || subOrchestrator === void 0 ? void 0 : subOrchestrator.destroy();
     }
 }

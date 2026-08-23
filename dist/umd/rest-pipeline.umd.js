@@ -2790,9 +2790,14 @@ var RestPipeline = (() => {
         return this._acquireViaStore();
       }
       await this.waitForWindow();
-      await this.waitForSlot();
-      this.activeCount++;
-      this.windowTimestamps.push(Date.now());
+      const max = this.config.maxConcurrent;
+      if (max && this.activeCount >= max) {
+        await new Promise((resolve) => {
+          this.waitQueue.push(resolve);
+        });
+      } else {
+        this.activeCount++;
+      }
       return () => {
         this.activeCount--;
         this.drainQueue();
@@ -2804,9 +2809,12 @@ var RestPipeline = (() => {
       const intervalMs = (_a = this.config.intervalMs) !== null && _a !== void 0 ? _a : 1e3;
       const maxReqs = this.config.maxRequestsPerInterval;
       if (maxReqs) {
+        const deadline = Date.now() + Math.max(intervalMs * 10, 3e4);
         while (true) {
           const count = await store.incrementWindow(this.key, intervalMs);
           if (count <= maxReqs)
+            break;
+          if (Date.now() >= deadline)
             break;
           await sleep(intervalMs);
         }
@@ -2820,37 +2828,45 @@ var RestPipeline = (() => {
         void (releaseSlot === null || releaseSlot === void 0 ? void 0 : releaseSlot());
       };
     }
-    async waitForSlot() {
-      const max = this.config.maxConcurrent;
-      if (!max)
-        return;
-      if (this.activeCount < max)
-        return;
-      return new Promise((resolve) => {
-        this.waitQueue.push(resolve);
-      });
-    }
+    /**
+     * Waits until there's room in the sliding window, then reserves the slot
+     * (records the timestamp) before returning — atomically with the capacity
+     * check, so two overlapping acquire() calls can't both see "room" and
+     * both proceed (a check-then-act race that a separate check + later
+     * push(Date.now()) in the caller would otherwise allow).
+     */
     async waitForWindow() {
       var _a;
       const maxReqs = this.config.maxRequestsPerInterval;
       const intervalMs = (_a = this.config.intervalMs) !== null && _a !== void 0 ? _a : 1e3;
       if (!maxReqs)
         return;
-      const now = Date.now();
-      this.windowTimestamps = this.windowTimestamps.filter((ts) => now - ts < intervalMs);
-      if (this.windowTimestamps.length < maxReqs)
-        return;
-      const oldest = this.windowTimestamps[0];
-      const waitMs = intervalMs - (now - oldest) + 1;
-      await new Promise((resolve) => setTimeout(resolve, waitMs));
-      const now2 = Date.now();
-      this.windowTimestamps = this.windowTimestamps.filter((ts) => now2 - ts < intervalMs);
+      while (true) {
+        const now = Date.now();
+        this.windowTimestamps = this.windowTimestamps.filter((ts) => now - ts < intervalMs);
+        if (this.windowTimestamps.length < maxReqs) {
+          this.windowTimestamps.push(now);
+          return;
+        }
+        const oldest = this.windowTimestamps[0];
+        const waitMs = intervalMs - (now - oldest) + 1;
+        await new Promise((resolve) => setTimeout(resolve, waitMs));
+      }
     }
+    /**
+     * Wakes queued waiters up to `maxConcurrent`, reserving (incrementing
+     * activeCount for) each one synchronously before resolving it — resolving
+     * a waiter's promise only schedules its continuation as a microtask, so
+     * without reserving here first, a single freed slot could otherwise wake
+     * more than one waiter in the same synchronous pass (activeCount wouldn't
+     * reflect the first wakeup yet when the loop checks again).
+     */
     drainQueue() {
       const max = this.config.maxConcurrent;
       if (!max)
         return;
       while (this.activeCount < max && this.waitQueue.length > 0) {
+        this.activeCount++;
         const next = this.waitQueue.shift();
         next === null || next === void 0 ? void 0 : next();
       }
@@ -3040,6 +3056,7 @@ var RestPipeline = (() => {
       this.sendReplay = sendReplay;
       this.toApiError = toApiError2;
       this.queue = [];
+      this.flushing = false;
       this.hydrated = this.hydrate();
       this.unsubscribe = (_b = ((_a = this.config.onOnlineChange) !== null && _a !== void 0 ? _a : defaultOnOnlineChange)(() => {
         void this.flush();
@@ -3112,28 +3129,46 @@ var RestPipeline = (() => {
     async flush() {
       var _a, _b, _c, _d;
       await this.hydrated;
-      while (this.queue.length > 0) {
-        if (!this.isOnline())
-          return;
-        const next = this.queue[0];
-        try {
-          const response = await this.sendReplay(next);
-          this.queue.shift();
-          await this.persist();
-          (_b = (_a = this.config).onFlushSuccess) === null || _b === void 0 ? void 0 : _b.call(_a, next, response);
-        } catch (err) {
+      if (this.flushing)
+        return;
+      this.flushing = true;
+      try {
+        while (this.queue.length > 0) {
           if (!this.isOnline())
             return;
-          const apiError = this.toApiError(err);
-          if (apiError.status !== void 0) {
-            this.queue.shift();
+          const next = this.queue[0];
+          try {
+            const response = await this.sendReplay(next);
+            this.removeById(next.id);
             await this.persist();
-            (_d = (_c = this.config).onFlushError) === null || _d === void 0 ? void 0 : _d.call(_c, next, apiError);
-          } else {
-            return;
+            (_b = (_a = this.config).onFlushSuccess) === null || _b === void 0 ? void 0 : _b.call(_a, next, response);
+          } catch (err) {
+            if (!this.isOnline())
+              return;
+            const apiError = this.toApiError(err);
+            if (apiError.status !== void 0) {
+              this.removeById(next.id);
+              await this.persist();
+              (_d = (_c = this.config).onFlushError) === null || _d === void 0 ? void 0 : _d.call(_c, next, apiError);
+            } else {
+              return;
+            }
           }
         }
+      } finally {
+        this.flushing = false;
       }
+    }
+    /**
+     * Removes a queue entry by id rather than shift()ing the front — `next`
+     * may no longer be at index 0 by the time an await resolves (e.g. a
+     * concurrent enqueue() trimmed the front via maxQueueSize while this entry
+     * was in flight), so shift() could otherwise remove the wrong entry.
+     */
+    removeById(id) {
+      const idx = this.queue.findIndex((r) => r.id === id);
+      if (idx !== -1)
+        this.queue.splice(idx, 1);
     }
     /** Unsubscribes from online/offline notifications. Call when the owning client is no longer needed. */
     destroy() {
@@ -3589,6 +3624,18 @@ var RestPipeline = (() => {
       }
     };
   }
+  var authProviderIds = /* @__PURE__ */ new WeakMap();
+  var nextAuthProviderId = 0;
+  function getAuthProviderKey(auth) {
+    if (!auth)
+      return null;
+    let id = authProviderIds.get(auth);
+    if (id === void 0) {
+      id = `auth-${nextAuthProviderId++}`;
+      authProviderIds.set(auth, id);
+    }
+    return id;
+  }
   function getRestClient(config) {
     var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v;
     const key = JSON.stringify({
@@ -3611,7 +3658,7 @@ var RestPipeline = (() => {
       sanitizeHeaders: (_k = config.sanitizeHeaders) !== null && _k !== void 0 ? _k : true,
       sensitiveHeaders: (_l = config.sensitiveHeaders) !== null && _l !== void 0 ? _l : [],
       metrics: !!config.metrics,
-      auth: !!config.auth,
+      auth: getAuthProviderKey(config.auth),
       deduplicateRequests: (_m = config.deduplicateRequests) !== null && _m !== void 0 ? _m : false,
       interceptors: !!config.interceptors,
       onError: !!config.onError,
@@ -3825,7 +3872,7 @@ var RestPipeline = (() => {
      * Alias for getProgress() — use subscribeProgress to track changes.
      */
     getProgressRef() {
-      return { ...this.progress };
+      return this.snapshot();
     }
     updateStage(stage, status) {
       this.progress.stageStatuses[stage] = status;
@@ -3833,19 +3880,23 @@ var RestPipeline = (() => {
       this.notify();
     }
     getProgress() {
-      return { ...this.progress };
+      return this.snapshot();
     }
     subscribe(listener) {
       this.listeners.push(listener);
-      listener({ ...this.progress });
+      listener(this.snapshot());
       return () => {
         this.listeners = this.listeners.filter((l) => l !== listener);
       };
     }
     notify() {
       for (const listener of this.listeners) {
-        listener({ ...this.progress });
+        listener(this.snapshot());
       }
+    }
+    /** A shallow copy of `progress` with `stageStatuses` also cloned, so a returned snapshot is a stable point-in-time value — `updateStage()` mutates the live array in place, and without cloning it, every previously-returned snapshot would silently reflect later updates too. */
+    snapshot() {
+      return { ...this.progress, stageStatuses: [...this.progress.stageStatuses] };
     }
   };
 
@@ -3972,8 +4023,9 @@ var RestPipeline = (() => {
       stepKey: key,
       stepIndex
     });
+    let subOrchestrator;
     try {
-      const subOrchestrator = new PipelineOrchestrator({
+      subOrchestrator = new PipelineOrchestrator({
         config: item.subPipeline,
         httpConfig: item.httpConfig,
         sharedData: {
@@ -4037,6 +4089,8 @@ var RestPipeline = (() => {
         error: apiError
       });
       throw err;
+    } finally {
+      subOrchestrator === null || subOrchestrator === void 0 ? void 0 : subOrchestrator.destroy();
     }
   }
 
@@ -4191,24 +4245,27 @@ var RestPipeline = (() => {
           var _a2;
           void ((_a2 = item.onOpen) === null || _a2 === void 0 ? void 0 : _a2.call(item, { ...hookParams, event }));
         };
-        const onMessage = async (event) => {
-          var _a2, _b2;
-          try {
-            const data = await item.onMessage(event === null || event === void 0 ? void 0 : event.data, { ...hookParams, event });
-            if (data !== void 0) {
-              collected.push(data);
-              (_a2 = item.onChunk) === null || _a2 === void 0 ? void 0 : _a2.call(item, data, ctx.sharedData);
-              await ctx.emit(`step:${key}:progress`, { chunk: data, chunks: [...collected] });
-            }
-            if (data !== void 0 && ((_b2 = item.closeOn) === null || _b2 === void 0 ? void 0 : _b2.call(item, data, hookParams))) {
-              try {
-                ws.close();
-              } catch {
+        let messageChain = Promise.resolve();
+        const onMessage = (event) => {
+          messageChain = messageChain.then(async () => {
+            var _a2, _b2;
+            try {
+              const data = await item.onMessage(event === null || event === void 0 ? void 0 : event.data, { ...hookParams, event });
+              if (data !== void 0) {
+                collected.push(data);
+                (_a2 = item.onChunk) === null || _a2 === void 0 ? void 0 : _a2.call(item, data, ctx.sharedData);
+                await ctx.emit(`step:${key}:progress`, { chunk: data, chunks: [...collected] });
               }
+              if (data !== void 0 && ((_b2 = item.closeOn) === null || _b2 === void 0 ? void 0 : _b2.call(item, data, hookParams))) {
+                try {
+                  ws.close();
+                } catch {
+                }
+              }
+            } catch (err) {
+              settle2(() => reject(err));
             }
-          } catch (err) {
-            settle2(() => reject(err));
-          }
+          });
         };
         const onClose = (event) => {
           settle2(() => {
@@ -4216,16 +4273,20 @@ var RestPipeline = (() => {
             const wasClean = (_a2 = event === null || event === void 0 ? void 0 : event.wasClean) !== null && _a2 !== void 0 ? _a2 : !sawError;
             void (async () => {
               var _a3;
-              await ((_a3 = item.onClose) === null || _a3 === void 0 ? void 0 : _a3.call(item, {
-                ...hookParams,
-                code: event === null || event === void 0 ? void 0 : event.code,
-                reason: event === null || event === void 0 ? void 0 : event.reason,
-                wasClean
-              }));
-              if (wasClean) {
-                resolve(collected);
-              } else {
-                reject(new Error(`WebSocket stage "${key}" closed uncleanly` + ((event === null || event === void 0 ? void 0 : event.code) !== void 0 ? ` (code ${event.code})` : "")));
+              try {
+                await ((_a3 = item.onClose) === null || _a3 === void 0 ? void 0 : _a3.call(item, {
+                  ...hookParams,
+                  code: event === null || event === void 0 ? void 0 : event.code,
+                  reason: event === null || event === void 0 ? void 0 : event.reason,
+                  wasClean
+                }));
+                if (wasClean) {
+                  resolve(collected);
+                } else {
+                  reject(new Error(`WebSocket stage "${key}" closed uncleanly` + ((event === null || event === void 0 ? void 0 : event.code) !== void 0 ? ` (code ${event.code})` : "")));
+                }
+              } catch (hookErr) {
+                reject(hookErr);
               }
             })();
           });
@@ -4334,6 +4395,7 @@ var RestPipeline = (() => {
       this.stageResults = {};
       this.stageResultsListeners = [];
       this.abortController = null;
+      this._rerunAbortController = null;
       this._pauseController = new PauseController();
       this._lastFailedIndex = -1;
       this._runId = "";
@@ -4467,6 +4529,9 @@ var RestPipeline = (() => {
       if (this.abortController) {
         this.abortController.abort();
       }
+      if (this._rerunAbortController) {
+        this._rerunAbortController.abort();
+      }
       if (this._pauseController.isPaused)
         this.resume();
     }
@@ -4491,7 +4556,11 @@ var RestPipeline = (() => {
     async emit(event, ...args) {
       if (this.eventHandlers[event]) {
         for (const handler of this.eventHandlers[event]) {
-          await handler(...args);
+          try {
+            await handler(...args);
+          } catch (err) {
+            this.addLog("error", `event handler for "${event}" threw`, { error: err });
+          }
         }
       }
     }
@@ -4783,6 +4852,15 @@ var RestPipeline = (() => {
     // ─────────────────────────────────────────────────────────────────────────
     // Helper method: find a stage by key, returning its index
     // ─────────────────────────────────────────────────────────────────────────
+    /**
+     * Finds a stage by key for `rerunStep()` — deliberately excludes stream/
+     * WebSocket stages (in addition to sub-pipelines), since the returned
+     * `.stage` is cast to `PipelineStageConfig` and handed to `executeStage()`,
+     * which only knows the `request`-based execution path. A stream/WebSocket
+     * item has no `request`, so `executeStage()` would silently fall through
+     * to the "no request function — use `key` as a URL" shorthand, treating
+     * the stage's key as a literal URL to GET.
+     */
     findStageByKey(key) {
       for (let i = 0; i < this.config.stages.length; i++) {
         const item = this.config.stages[i];
@@ -4790,7 +4868,7 @@ var RestPipeline = (() => {
           const found = item.parallel.find((s) => s.key === key);
           if (found)
             return { stage: found, index: i };
-        } else if (!isSubPipeline(item)) {
+        } else if (!isSubPipeline(item) && !isStreamStage(item) && !isWebSocketStage(item)) {
           const stage = item;
           if (stage.key === key)
             return { stage, index: i };
@@ -4981,7 +5059,7 @@ var RestPipeline = (() => {
       let lastResult = { stageResults: {}, success: false };
       const pipelineStartTs = Date.now();
       const persistAdapter = (_c = this.config.options) === null || _c === void 0 ? void 0 : _c.persistAdapter;
-      if (persistAdapter) {
+      if (persistAdapter && !this.autoReset) {
         try {
           const saved = await persistAdapter.load();
           if (saved)
@@ -5046,54 +5124,55 @@ var RestPipeline = (() => {
      */
     async rerunStep(stepKey, options) {
       var _a;
-      let stage;
-      let stepIndex = -1;
-      for (let i = 0; i < this.config.stages.length; i++) {
-        const item = this.config.stages[i];
-        if (isParallelGroup(item)) {
-          const found = item.parallel.find((s) => s.key === stepKey);
-          if (found) {
-            stage = found;
-            stepIndex = i;
-            break;
-          }
-        } else if (!isSubPipeline(item) && item.key === stepKey) {
-          stage = item;
-          stepIndex = i;
-          break;
+      const found = this.findStageByKey(stepKey);
+      if (!found)
+        return void 0;
+      const { stage, index: stepIndex } = found;
+      this._runId = this._generateRunId();
+      const ownController = (options === null || options === void 0 ? void 0 : options.externalSignal) ? null : new AbortController();
+      if (ownController)
+        this._rerunAbortController = ownController;
+      const signal = (_a = options === null || options === void 0 ? void 0 : options.externalSignal) !== null && _a !== void 0 ? _a : ownController.signal;
+      try {
+        this.addLog("log", `rerunStep:${stepKey}:start`, { stepIndex });
+        await this.emit("log", { type: "rerunStep:start", stepKey, stepIndex });
+        const result = await this.executeStage(stepIndex, stage, signal, options === null || options === void 0 ? void 0 : options.onStepPause);
+        const logType = result.status === "error" ? "error" : "log";
+        this.addLog(logType, `rerunStep:${stepKey}:${result.status}`, {
+          stepIndex,
+          ...result.status === "error" ? { error: result.error } : { data: result.data }
+        });
+        await this.emit("log", {
+          type: `rerunStep:${result.status}`,
+          stepKey,
+          stepIndex,
+          ...result.status === "error" ? { error: result.error } : { data: result.data }
+        });
+        return result;
+      } finally {
+        if (ownController && this._rerunAbortController === ownController) {
+          this._rerunAbortController = null;
         }
       }
-      if (!stage || stepIndex === -1)
-        return void 0;
-      this._runId = this._generateRunId();
-      this.addLog("log", `rerunStep:${stepKey}:start`, { stepIndex });
-      await this.emit("log", { type: "rerunStep:start", stepKey, stepIndex });
-      const signal = (_a = options === null || options === void 0 ? void 0 : options.externalSignal) !== null && _a !== void 0 ? _a : new AbortController().signal;
-      const result = await this.executeStage(stepIndex, stage, signal, options === null || options === void 0 ? void 0 : options.onStepPause);
-      const logType = result.status === "error" ? "error" : "log";
-      this.addLog(logType, `rerunStep:${stepKey}:${result.status}`, {
-        stepIndex,
-        ...result.status === "error" ? { error: result.error } : { data: result.data }
-      });
-      await this.emit("log", {
-        type: `rerunStep:${result.status}`,
-        stepKey,
-        stepIndex,
-        ...result.status === "error" ? { error: result.error } : { data: result.data }
-      });
-      return result;
     }
     // ─────────────────────────────────────────────────────────────────────────
     // Helpers
     // ─────────────────────────────────────────────────────────────────────────
     mergeSignals(a, b) {
       const controller = new AbortController();
-      const abort = () => controller.abort();
+      const cleanup = () => {
+        a.removeEventListener("abort", onAbort);
+        b.removeEventListener("abort", onAbort);
+      };
+      const onAbort = () => {
+        cleanup();
+        controller.abort();
+      };
       if (a.aborted || b.aborted) {
         controller.abort();
       } else {
-        a.addEventListener("abort", abort, { once: true });
-        b.addEventListener("abort", abort, { once: true });
+        a.addEventListener("abort", onAbort);
+        b.addEventListener("abort", onAbort);
       }
       return controller.signal;
     }
@@ -5212,18 +5291,6 @@ var RestPipeline = (() => {
   }
 
   // dist/esm/pipeline/pipeline-validator.js
-  function isParallelGroup2(item) {
-    return typeof item === "object" && item !== null && "parallel" in item;
-  }
-  function isSubPipeline2(item) {
-    return typeof item === "object" && item !== null && "subPipeline" in item;
-  }
-  function isStreamStage2(item) {
-    return typeof item === "object" && item !== null && "stream" in item;
-  }
-  function isWebSocketStage2(item) {
-    return typeof item === "object" && item !== null && "onMessage" in item;
-  }
   function validatePipelineConfig(config, context = "root") {
     const errors = [];
     if (!config || typeof config !== "object") {
@@ -5243,29 +5310,33 @@ var RestPipeline = (() => {
   function collectAllKeys(stages, context, errors) {
     const keys = [];
     for (const item of stages) {
-      if (isParallelGroup2(item)) {
+      if (isParallelGroup(item)) {
         validateKey(item.key, `${context} > parallel group`, errors);
-        keys.push(item.key);
+        if (isValidKey(item.key))
+          keys.push(item.key);
         if (!Array.isArray(item.parallel) || item.parallel.length === 0) {
           errors.push(`[${context}] parallel group "${item.key}" must have at least one stage`);
         } else {
           const subKeys = collectAllKeys(item.parallel, `${context} > ${item.key}`, errors);
           keys.push(...subKeys);
         }
-      } else if (isSubPipeline2(item)) {
+      } else if (isSubPipeline(item)) {
         validateKey(item.key, `${context} > subPipeline`, errors);
-        keys.push(item.key);
+        if (isValidKey(item.key))
+          keys.push(item.key);
         const subResult = validatePipelineConfig(item.subPipeline, `${context} > subPipeline:${item.key}`);
         errors.push(...subResult.errors);
-      } else if (isStreamStage2(item)) {
+      } else if (isStreamStage(item)) {
         validateKey(item.key, `${context} > stream`, errors);
-        keys.push(item.key);
+        if (isValidKey(item.key))
+          keys.push(item.key);
         if (typeof item.stream !== "function") {
           errors.push(`[${context}] stream stage "${item.key}": stream must be a function`);
         }
-      } else if (isWebSocketStage2(item)) {
+      } else if (isWebSocketStage(item)) {
         validateKey(item.key, `${context} > websocket`, errors);
-        keys.push(item.key);
+        if (isValidKey(item.key))
+          keys.push(item.key);
         if (item.url === void 0 || typeof item.url !== "string" && typeof item.url !== "function") {
           errors.push(`[${context}] websocket stage "${item.key}": url must be a string or function`);
         }
@@ -5278,7 +5349,8 @@ var RestPipeline = (() => {
       } else {
         const stage = item;
         validateKey(stage.key, context, errors);
-        keys.push(stage.key);
+        if (isValidKey(stage.key))
+          keys.push(stage.key);
         if (stage.request !== void 0 && typeof stage.request !== "function") {
           errors.push(`[${context}] stage "${stage.key}": request must be a function`);
         }
@@ -5294,6 +5366,9 @@ var RestPipeline = (() => {
       }
     }
     return keys;
+  }
+  function isValidKey(key) {
+    return typeof key === "string" && key.trim() !== "";
   }
   function validateKey(key, context, errors) {
     if (typeof key !== "string" || key.trim() === "") {

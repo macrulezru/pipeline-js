@@ -43,6 +43,7 @@ export declare class OfflineQueue {
     private queue;
     private hydrated;
     private unsubscribe;
+    private flushing;
     constructor(config: OfflineQueueConfig, sendReplay: OfflineQueueSendReplay, toApiError: (error: unknown) => ApiError);
     private hydrate;
     private persist;
@@ -80,6 +81,13 @@ export declare class OfflineQueue {
      * possibly still-recovering backend.
      */
     flush(): Promise<void>;
+    /**
+     * Removes a queue entry by id rather than shift()ing the front — `next`
+     * may no longer be at index 0 by the time an await resolves (e.g. a
+     * concurrent enqueue() trimmed the front via maxQueueSize while this entry
+     * was in flight), so shift() could otherwise remove the wrong entry.
+     */
+    private removeById;
     /** Unsubscribes from online/offline notifications. Call when the owning client is no longer needed. */
     destroy(): void;
 }

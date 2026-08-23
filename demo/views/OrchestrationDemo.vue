@@ -61,9 +61,13 @@ async function run(branch: string) {
   log.value = [];
   orchestrator = buildOrchestrator(branch);
   addLog(`Running with branch="${branch}"`);
-  const result = await orchestrator.run();
-  lastResult.value = result;
-  running.value = false;
+  try {
+    lastResult.value = await orchestrator.run();
+  } catch (e: any) {
+    addLog(`Run failed: ${e?.message ?? e}`, "error");
+  } finally {
+    running.value = false;
+  }
 }
 
 // ── Export / import ────────────────────────────────────────────
