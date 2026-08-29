@@ -1,13 +1,6 @@
-<div align="center" style="background:#111827;border-radius:20px;padding:28px 20px 20px;margin-bottom:32px">
-  <h1 style="color:#f9fafb;margin:0 0 32px;font-size:2.2em;letter-spacing:-0.03em;font-weight:700;font-family:sans-serif">
-    rest-pipeline-js
-  </h1>
-  <img
-    src="https://s3.twcstorage.ru/c9a2cc89-780f97fd-311d-4a1a-b86f-c25665c9dc46/images/npm/rest-pipeline-js_v2.webp"
-    alt="rest-pipeline-js"
-    style="max-width:100%;width:auto;height:300px;border-radius:12px"
-  />
-</div>
+# **Rest Pipeline JS**
+
+![Rest Pipeline JS](https://github.com/macrulezru/assets/blob/master/packages-images/rest-pipeline-js.png?raw=true)
 
 Flexible, modular pipeline orchestrator for REST APIs — sequential and parallel stages, retry with backoff, response caching, rate limiting, auth provider, stream stages (SSE / AsyncIterable), plugin system, and Vue / React integrations — all with a single dependency (axios).
 
@@ -1774,7 +1767,7 @@ MIT
 
 Danil Lisin Vladimirovich aka Macrulez
 
-GitHub: [macrulezru](https://github.com/macrulezru) · Website: [macrulez.ru/en](https://macrulez.ru/en)
+GitHub: [macrulezru](https://github.com/macrulezru) · Website: [npm.vuecraft.ru/en/](https://npm.vuecraft.ru/en/packages/rest-pipeline-js/)
 
 Bugs and questions — [issues](https://github.com/macrulezru/pipeline-js/issues)
 

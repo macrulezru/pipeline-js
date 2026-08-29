@@ -1,10 +1,10 @@
 {
   "name": "rest-pipeline-js",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "Orchestrate REST API calls in sequential and parallel pipelines with retry, caching, rate limiting and SSE streaming. Vanilla JS / Vue 3 / React.",
   "author": "macrulez <macrulezru@gmail.com> (https://macrulez.ru/en)",
   "license": "MIT",
-  "homepage": "https://github.com/macrulezru/pipeline-js#readme",
+  "homepage": "https://npm.vuecraft.ru/en/packages/rest-pipeline-js/",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/macrulezru/pipeline-js.git"
