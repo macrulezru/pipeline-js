@@ -102,6 +102,115 @@ const result = await orchestrator.run()
 console.log(result.success, result.stageResults)
 ```
 
+### More examples
+
+#### Vanilla JS
+
+**A circuit breaker for a failing backend**
+
+After a run of consecutive failures, the client stops hitting the dead API and rejects requests locally right away — then probes on its own to see if it's back.
+
+```ts
+import { createRestClient, CircuitOpenError } from 'rest-pipeline-js'
+
+const client = createRestClient({
+  baseURL: 'https://api.example.com',
+  circuitBreaker: {
+    failureThreshold: 5, // open after 5 consecutive failures
+    openMs: 30_000, // stay open for 30s before probing again
+    isFailure: (error) => error.status === undefined || error.status >= 500, // ignore 4xx
+  },
+})
+
+try {
+  await client.get('/flaky-endpoint')
+} catch (err) {
+  if (err instanceof CircuitOpenError) {
+    // rejected locally — no network call was made
+  }
+}
+```
+
+#### Vue
+
+**Reactive pipeline run in Vue**
+
+`usePipelineRunVue` and `usePipelineProgressVue` return the run state and current stage as reactive refs — the component re-renders on its own as the pipeline runs, no manual event subscriptions.
+
+```vue
+<script setup>
+import { PipelineOrchestrator, usePipelineProgressVue, usePipelineRunVue } from 'rest-pipeline-js/vue'
+
+const orchestrator = new PipelineOrchestrator({
+  config: {
+    stages: [
+      /* ... */
+    ],
+  },
+})
+const progress = usePipelineProgressVue(orchestrator)
+const { run, running, result, error, abort, pause, resume, rerunStep } = usePipelineRunVue(orchestrator)
+</script>
+
+<template>
+  <div>
+    <div>Current stage: {{ progress.currentStage }}</div>
+    <button @click="run()" :disabled="running">Start</button>
+    <button @click="abort()" :disabled="!running">Abort</button>
+    <button @click="pause()">Pause</button>
+    <button @click="resume()">Resume</button>
+    <div v-if="result">Done: {{ result }}</div>
+    <div v-if="error">Error: {{ error.message }}</div>
+  </div>
+</template>
+```
+
+#### React
+
+**The same pipeline as a React hook**
+
+`usePipelineRunReact` and `usePipelineProgressReact` — the same run and progress, as plain React state and a function.
+
+```jsx
+import { useState } from 'react'
+import { PipelineOrchestrator, usePipelineProgressReact, usePipelineRunReact } from 'rest-pipeline-js/react'
+
+export function PipelineComponent() {
+  // Lazy initializer — created once per component instance, not shared
+  // across every <PipelineComponent> on the page like a module-scope
+  // orchestrator would be.
+  const [orchestrator] = useState(
+    () =>
+      new PipelineOrchestrator({
+        config: {
+          stages: [
+            /* ... */
+          ],
+        },
+      }),
+  )
+  const progress = usePipelineProgressReact(orchestrator)
+  const [run, { running, result, error, abort, pause, resume, rerunStep, clearStageResults }] =
+    usePipelineRunReact(orchestrator)
+
+  return (
+    <div>
+      <div>Current stage: {progress.currentStage}</div>
+      <button onClick={() => run()} disabled={running}>
+        Start
+      </button>
+      <button onClick={() => abort()} disabled={!running}>
+        Abort
+      </button>
+      <button onClick={() => pause()}>Pause</button>
+      <button onClick={() => resume()}>Resume</button>
+      {result && <div>Done: {JSON.stringify(result)}</div>}
+      {error && <div>Error: {error.message}</div>}
+    </div>
+  )
+}
+```
+
 ---
 
 ## Documentation & links
