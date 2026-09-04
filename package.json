@@ -1,6 +1,6 @@
 {
   "name": "rest-pipeline-js",
-  "version": "2.1.2",
+  "version": "2.1.3",
   "description": "Orchestrate REST API calls in sequential and parallel pipelines with retry, caching, rate limiting and SSE streaming. Vanilla JS / Vue 3 / React.",
   "author": "macrulez <macrulezru@gmail.com> (https://macrulez.ru/en)",
   "license": "MIT",
