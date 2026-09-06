@@ -34,6 +34,17 @@ Flexible, modular pipeline orchestrator for REST APIs — sequential and paralle
 
 ---
 
+## When you'd reach for this
+
+A plain fetch call with error handling works fine until your project needs retries, caching, rate limits, and token refresh all at once — rest-pipeline-js pulls all of that into one configurable pipeline instead of scattered ad-hoc code for every case.
+
+- **A checkout shouldn't double-charge** — A shopper taps "Pay" twice because the network stalls — idempotency keys guarantee the retry doesn't create a second order, and an offline queue delivers the operation once the connection comes back if it drops entirely.
+- **A dashboard is assembled from dependent requests** — One request returns a list of objects, the next pulls metrics for each one, a third compares them to the previous period, and each step's result shapes the parameters of the next. The whole chain is described as a single pipeline, where each step automatically receives what it needs from the one before it, instead of requests nested inside each other and data passed around by hand.
+- **Booking a service means several linked checks** — Confirming a reservation means checking slot availability, pricing in a discount, reserving the spot, and sending a notification — if one step fails, you need to know exactly what already happened and retry just the stuck step instead of starting the whole flow over.
+- **A server response fails validation** — A validation schema (Zod, Yup, or Valibot) catches a malformed response before it reaches the rest of your code, and the process itself gets a chance to fall back to a default value instead of aborting entirely.
+
+---
+
 ## Installation
 
 The core package has no required peer dependencies — only `axios` (a regular dependency). Vue and React are optional peers, needed only if you import from the matching entry point (`rest-pipeline-js/vue` / `rest-pipeline-js/react`):
