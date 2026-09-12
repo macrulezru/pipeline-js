@@ -560,22 +560,35 @@ export function createRestClient(config) {
         },
     };
 }
-// Gives each distinct `auth` provider object a stable id, so the cache key
-// below can tell two configs apart when they differ only in *which*
-// AuthProvider they pass — `!!config.auth` alone would collapse them onto
-// the same cached client, silently sharing one config's auth on requests
-// made through the other's.
-const authProviderIds = new WeakMap();
-let nextAuthProviderId = 0;
-function getAuthProviderKey(auth) {
-    if (!auth)
+// Gives each distinct function/object-valued config field a stable id, so
+// the cache key below can tell two configs apart when they differ only in
+// *which* callback/store/adapter/provider they pass — tracking mere
+// presence (`!!config.onError`) would collapse them onto the same cached
+// client, silently sharing one config's callback on requests made through
+// the other's (the earlier-cached closure keeps running forever, the newer
+// one is never actually called). One shared WeakMap works for every field —
+// each gets its own id-prefix namespace, so ids never collide across
+// different fields even though they share one map.
+const identityIds = new WeakMap();
+let nextIdentityId = 0;
+function getIdentityKey(value, prefix) {
+    if (!value)
         return null;
-    let id = authProviderIds.get(auth);
+    let id = identityIds.get(value);
     if (id === undefined) {
-        id = `auth-${nextAuthProviderId++}`;
-        authProviderIds.set(auth, id);
+        id = `${prefix}-${nextIdentityId++}`;
+        identityIds.set(value, id);
     }
     return id;
+}
+// `interceptors.request/response/error` each accept either a single
+// function or an array of them — normalize to an array first so every
+// configured interceptor gets its own identity key, not just the first.
+function getInterceptorKeys(value, prefix) {
+    if (!value)
+        return null;
+    const list = Array.isArray(value) ? value : [value];
+    return list.map((fn) => getIdentityKey(fn, prefix));
 }
 export function getRestClient(config) {
     var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v;
@@ -585,37 +598,42 @@ export function getRestClient(config) {
         withCredentials: config.withCredentials,
         headers: (_a = config.headers) !== null && _a !== void 0 ? _a : {},
         retry: (_b = config.retry) !== null && _b !== void 0 ? _b : {},
-        // Function-valued fields (store/isFailure/provider) are dropped by
-        // JSON.stringify — tracked as booleans instead so two configs that only
-        // differ in *which* store/predicate/provider they pass don't collide on
-        // the same cached client.
-        cache: { ...((_c = config.cache) !== null && _c !== void 0 ? _c : {}), store: !!((_d = config.cache) === null || _d === void 0 ? void 0 : _d.store) },
-        rateLimit: { ...((_e = config.rateLimit) !== null && _e !== void 0 ? _e : {}), store: !!((_f = config.rateLimit) === null || _f === void 0 ? void 0 : _f.store) },
+        cache: { ...((_c = config.cache) !== null && _c !== void 0 ? _c : {}), store: getIdentityKey((_d = config.cache) === null || _d === void 0 ? void 0 : _d.store, "cache-store") },
+        rateLimit: {
+            ...((_e = config.rateLimit) !== null && _e !== void 0 ? _e : {}),
+            store: getIdentityKey((_f = config.rateLimit) === null || _f === void 0 ? void 0 : _f.store, "rate-limit-store"),
+        },
         circuitBreaker: {
             ...((_g = config.circuitBreaker) !== null && _g !== void 0 ? _g : {}),
-            store: !!((_h = config.circuitBreaker) === null || _h === void 0 ? void 0 : _h.store),
-            isFailure: !!((_j = config.circuitBreaker) === null || _j === void 0 ? void 0 : _j.isFailure),
+            store: getIdentityKey((_h = config.circuitBreaker) === null || _h === void 0 ? void 0 : _h.store, "circuit-breaker-store"),
+            isFailure: getIdentityKey((_j = config.circuitBreaker) === null || _j === void 0 ? void 0 : _j.isFailure, "circuit-breaker-is-failure"),
         },
         sanitizeHeaders: (_k = config.sanitizeHeaders) !== null && _k !== void 0 ? _k : true,
         sensitiveHeaders: (_l = config.sensitiveHeaders) !== null && _l !== void 0 ? _l : [],
-        metrics: !!config.metrics,
-        auth: getAuthProviderKey(config.auth),
+        metrics: getIdentityKey(config.metrics, "metrics"),
+        auth: getIdentityKey(config.auth, "auth"),
         deduplicateRequests: (_m = config.deduplicateRequests) !== null && _m !== void 0 ? _m : false,
-        interceptors: !!config.interceptors,
-        onError: !!config.onError,
-        adapter: !!config.adapter,
+        interceptors: config.interceptors
+            ? {
+                request: getInterceptorKeys(config.interceptors.request, "interceptor-request"),
+                response: getInterceptorKeys(config.interceptors.response, "interceptor-response"),
+                error: getInterceptorKeys(config.interceptors.error, "interceptor-error"),
+            }
+            : null,
+        onError: getIdentityKey(config.onError, "on-error"),
+        adapter: getIdentityKey(config.adapter, "adapter"),
         tracing: {
             generateTraceparent: !!((_o = config.tracing) === null || _o === void 0 ? void 0 : _o.generateTraceparent),
-            provider: !!((_p = config.tracing) === null || _p === void 0 ? void 0 : _p.provider),
+            provider: getIdentityKey((_p = config.tracing) === null || _p === void 0 ? void 0 : _p.provider, "tracing-provider"),
         },
         idempotencyHeaderName: config.idempotencyHeaderName,
         autoIdempotencyKey: !!config.autoIdempotencyKey,
         offlineQueue: {
             enabled: !!((_q = config.offlineQueue) === null || _q === void 0 ? void 0 : _q.enabled),
-            persistAdapter: !!((_r = config.offlineQueue) === null || _r === void 0 ? void 0 : _r.persistAdapter),
-            isOnline: !!((_s = config.offlineQueue) === null || _s === void 0 ? void 0 : _s.isOnline),
-            onOnlineChange: !!((_t = config.offlineQueue) === null || _t === void 0 ? void 0 : _t.onOnlineChange),
-            shouldQueue: !!((_u = config.offlineQueue) === null || _u === void 0 ? void 0 : _u.shouldQueue),
+            persistAdapter: getIdentityKey((_r = config.offlineQueue) === null || _r === void 0 ? void 0 : _r.persistAdapter, "offline-persist-adapter"),
+            isOnline: getIdentityKey((_s = config.offlineQueue) === null || _s === void 0 ? void 0 : _s.isOnline, "offline-is-online"),
+            onOnlineChange: getIdentityKey((_t = config.offlineQueue) === null || _t === void 0 ? void 0 : _t.onOnlineChange, "offline-on-online-change"),
+            shouldQueue: getIdentityKey((_u = config.offlineQueue) === null || _u === void 0 ? void 0 : _u.shouldQueue, "offline-should-queue"),
             maxQueueSize: (_v = config.offlineQueue) === null || _v === void 0 ? void 0 : _v.maxQueueSize,
         },
     });
