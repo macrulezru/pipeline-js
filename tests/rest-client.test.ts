@@ -122,6 +122,62 @@ describe("clearRestClientCache", () => {
     expect(headersB.Authorization).toBe("Bearer token-B");
   });
 
+  it("two configs identical except for onError do not share a cached client — each keeps its own callback", async () => {
+    clearRestClientCache();
+    const adapterRequest = vi.fn().mockRejectedValue(new Error("boom"));
+    const onErrorA = vi.fn();
+    const onErrorB = vi.fn();
+
+    const configA = {
+      baseURL: "http://test.local",
+      adapter: { request: adapterRequest },
+      onError: onErrorA,
+    };
+    const configB = {
+      baseURL: "http://test.local",
+      adapter: { request: adapterRequest },
+      onError: onErrorB,
+    };
+
+    const clientA = getRestClient(configA);
+    const clientB = getRestClient(configB);
+    expect(clientA).not.toBe(clientB);
+
+    await clientA.get("/ping").catch(() => {});
+    await clientB.get("/ping").catch(() => {});
+
+    expect(onErrorA).toHaveBeenCalledTimes(1);
+    expect(onErrorB).toHaveBeenCalledTimes(1);
+  });
+
+  it("two configs identical except for interceptors.error do not share a cached client", async () => {
+    clearRestClientCache();
+    const adapterRequest = vi.fn().mockRejectedValue(new Error("boom"));
+    const errorInterceptorA = vi.fn((err) => err);
+    const errorInterceptorB = vi.fn((err) => err);
+
+    const configA = {
+      baseURL: "http://test.local",
+      adapter: { request: adapterRequest },
+      interceptors: { error: errorInterceptorA },
+    };
+    const configB = {
+      baseURL: "http://test.local",
+      adapter: { request: adapterRequest },
+      interceptors: { error: errorInterceptorB },
+    };
+
+    const clientA = getRestClient(configA);
+    const clientB = getRestClient(configB);
+    expect(clientA).not.toBe(clientB);
+
+    await clientA.get("/ping").catch(() => {});
+    await clientB.get("/ping").catch(() => {});
+
+    expect(errorInterceptorA).toHaveBeenCalledTimes(1);
+    expect(errorInterceptorB).toHaveBeenCalledTimes(1);
+  });
+
   it("clearCache() clears the client's response cache", () => {
     const client = createRestClient({ baseURL: "http://localhost" });
     expect(() => client.clearCache()).not.toThrow();

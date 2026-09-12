@@ -15,7 +15,6 @@ import type {
   CacheStore,
   TracingSpan,
   QueuedRequest,
-  AuthProvider,
 } from "../types.js";
 import { DEFAULT_SENSITIVE_HEADERS } from "../types.js";
 import type { AxiosInstance, AxiosResponse } from "axios";
@@ -718,21 +717,37 @@ export function createRestClient(config: HttpConfig) {
   };
 }
 
-// Gives each distinct `auth` provider object a stable id, so the cache key
-// below can tell two configs apart when they differ only in *which*
-// AuthProvider they pass — `!!config.auth` alone would collapse them onto
-// the same cached client, silently sharing one config's auth on requests
-// made through the other's.
-const authProviderIds = new WeakMap<AuthProvider, string>();
-let nextAuthProviderId = 0;
-function getAuthProviderKey(auth: AuthProvider | undefined): string | null {
-  if (!auth) return null;
-  let id = authProviderIds.get(auth);
+// Gives each distinct function/object-valued config field a stable id, so
+// the cache key below can tell two configs apart when they differ only in
+// *which* callback/store/adapter/provider they pass — tracking mere
+// presence (`!!config.onError`) would collapse them onto the same cached
+// client, silently sharing one config's callback on requests made through
+// the other's (the earlier-cached closure keeps running forever, the newer
+// one is never actually called). One shared WeakMap works for every field —
+// each gets its own id-prefix namespace, so ids never collide across
+// different fields even though they share one map.
+const identityIds = new WeakMap<object, string>();
+let nextIdentityId = 0;
+function getIdentityKey(value: object | undefined | null, prefix: string): string | null {
+  if (!value) return null;
+  let id = identityIds.get(value);
   if (id === undefined) {
-    id = `auth-${nextAuthProviderId++}`;
-    authProviderIds.set(auth, id);
+    id = `${prefix}-${nextIdentityId++}`;
+    identityIds.set(value, id);
   }
   return id;
+}
+
+// `interceptors.request/response/error` each accept either a single
+// function or an array of them — normalize to an array first so every
+// configured interceptor gets its own identity key, not just the first.
+function getInterceptorKeys(
+  value: unknown,
+  prefix: string,
+): (string | null)[] | null {
+  if (!value) return null;
+  const list = Array.isArray(value) ? value : [value];
+  return list.map((fn) => getIdentityKey(fn as object, prefix));
 }
 
 export function getRestClient(config: HttpConfig): RestClient {
@@ -742,37 +757,42 @@ export function getRestClient(config: HttpConfig): RestClient {
     withCredentials: config.withCredentials,
     headers: config.headers ?? {},
     retry: config.retry ?? {},
-    // Function-valued fields (store/isFailure/provider) are dropped by
-    // JSON.stringify — tracked as booleans instead so two configs that only
-    // differ in *which* store/predicate/provider they pass don't collide on
-    // the same cached client.
-    cache: { ...(config.cache ?? {}), store: !!config.cache?.store },
-    rateLimit: { ...(config.rateLimit ?? {}), store: !!config.rateLimit?.store },
+    cache: { ...(config.cache ?? {}), store: getIdentityKey(config.cache?.store, "cache-store") },
+    rateLimit: {
+      ...(config.rateLimit ?? {}),
+      store: getIdentityKey(config.rateLimit?.store, "rate-limit-store"),
+    },
     circuitBreaker: {
       ...(config.circuitBreaker ?? {}),
-      store: !!config.circuitBreaker?.store,
-      isFailure: !!config.circuitBreaker?.isFailure,
+      store: getIdentityKey(config.circuitBreaker?.store, "circuit-breaker-store"),
+      isFailure: getIdentityKey(config.circuitBreaker?.isFailure, "circuit-breaker-is-failure"),
     },
     sanitizeHeaders: config.sanitizeHeaders ?? true,
     sensitiveHeaders: config.sensitiveHeaders ?? [],
-    metrics: !!config.metrics,
-    auth: getAuthProviderKey(config.auth),
+    metrics: getIdentityKey(config.metrics, "metrics"),
+    auth: getIdentityKey(config.auth, "auth"),
     deduplicateRequests: config.deduplicateRequests ?? false,
-    interceptors: !!config.interceptors,
-    onError: !!config.onError,
-    adapter: !!config.adapter,
+    interceptors: config.interceptors
+      ? {
+          request: getInterceptorKeys(config.interceptors.request, "interceptor-request"),
+          response: getInterceptorKeys(config.interceptors.response, "interceptor-response"),
+          error: getInterceptorKeys(config.interceptors.error, "interceptor-error"),
+        }
+      : null,
+    onError: getIdentityKey(config.onError, "on-error"),
+    adapter: getIdentityKey(config.adapter, "adapter"),
     tracing: {
       generateTraceparent: !!config.tracing?.generateTraceparent,
-      provider: !!config.tracing?.provider,
+      provider: getIdentityKey(config.tracing?.provider, "tracing-provider"),
     },
     idempotencyHeaderName: config.idempotencyHeaderName,
     autoIdempotencyKey: !!config.autoIdempotencyKey,
     offlineQueue: {
       enabled: !!config.offlineQueue?.enabled,
-      persistAdapter: !!config.offlineQueue?.persistAdapter,
-      isOnline: !!config.offlineQueue?.isOnline,
-      onOnlineChange: !!config.offlineQueue?.onOnlineChange,
-      shouldQueue: !!config.offlineQueue?.shouldQueue,
+      persistAdapter: getIdentityKey(config.offlineQueue?.persistAdapter, "offline-persist-adapter"),
+      isOnline: getIdentityKey(config.offlineQueue?.isOnline, "offline-is-online"),
+      onOnlineChange: getIdentityKey(config.offlineQueue?.onOnlineChange, "offline-on-online-change"),
+      shouldQueue: getIdentityKey(config.offlineQueue?.shouldQueue, "offline-should-queue"),
       maxQueueSize: config.offlineQueue?.maxQueueSize,
     },
   });
